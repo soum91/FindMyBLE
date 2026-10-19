@@ -14,6 +14,7 @@ final class BLEMonitor: NSObject, ObservableObject {
     static let restoreID = "com.soumen.findmyble.central"
     private let savedNameKey = "watchedPeripheralName"
     private let savedServicesKey = "watchedServiceUUIDs"
+    private let matchKey = "matchPrefix"
     private let timeoutKey = "awayTimeout"
     private let alertsKey = "alertsEnabled"
     private let lastSeenKey = "lastSightingDate"
@@ -46,6 +47,12 @@ final class BLEMonitor: NSObject, ObservableObject {
     /// in the background, so such an item is tracked only while the app is open.
     @Published var backgroundCapable = true
 
+    /// Any advertised name starting with this counts as the item. Devices like the LARQ cap
+    /// rotate the random part of their name ("LARQ_xxxx"), so exact matching would lose it.
+    @Published var matchPrefix: String {
+        didSet { UserDefaults.standard.set(matchPrefix, forKey: matchKey) }
+    }
+
     /// Seconds without a sighting before it counts as left behind.
     @Published var graceSeconds: Double {
         didSet {
@@ -71,6 +78,8 @@ final class BLEMonitor: NSObject, ObservableObject {
         graceSeconds = t == 0 ? 180 : t
         alertsEnabled = UserDefaults.standard.object(forKey: alertsKey) as? Bool ?? true
         watchedName = UserDefaults.standard.string(forKey: savedNameKey)
+        matchPrefix = UserDefaults.standard.string(forKey: matchKey)
+            ?? UserDefaults.standard.string(forKey: savedNameKey).map { BLEMonitor.defaultPrefix(for: $0) } ?? ""
         watchedServices = (UserDefaults.standard.stringArray(forKey: savedServicesKey) ?? []).map(CBUUID.init(string:))
         lastSighting = UserDefaults.standard.object(forKey: lastSeenKey) as? Date
         super.init()
@@ -111,6 +120,7 @@ final class BLEMonitor: NSObject, ObservableObject {
     func watch(_ device: Device) {
         isScanning = false
         watchedName = device.name
+        matchPrefix = Self.defaultPrefix(for: device.name)
         watchedServices = device.services
         backgroundCapable = !device.services.isEmpty
         UserDefaults.standard.set(device.name, forKey: savedNameKey)
@@ -132,6 +142,22 @@ final class BLEMonitor: NSObject, ObservableObject {
         rssi = nil
         cancelLostAlert()
         updateScan(force: true)
+    }
+
+    // MARK: - Name matching
+
+    /// "LARQ_AddzOy6Y39n" -> "LARQ_". Names with no separator are matched whole.
+    static func defaultPrefix(for name: String) -> String {
+        if let i = name.firstIndex(where: { $0 == "_" || $0 == "-" || $0 == " " }) {
+            return String(name[...i])
+        }
+        return name
+    }
+
+    private func matches(_ name: String) -> Bool {
+        let p = matchPrefix.trimmingCharacters(in: .whitespaces)
+        guard !p.isEmpty else { return false }
+        return name.range(of: p, options: [.caseInsensitive, .anchored]) != nil
     }
 
     // MARK: - Scanning
@@ -229,7 +255,7 @@ extension BLEMonitor: CBCentralManagerDelegate {
         let name = (ad[CBAdvertisementDataLocalNameKey] as? String) ?? p.name
         let services = (ad[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
 
-        if let watched = watchedName, name == watched {
+        if watchedName != nil, let name, matches(name) {
             sighted(rssi: r)
         }
 

@@ -237,6 +237,19 @@ struct ItemDetail: View {
             }
 
             Section {
+                LabeledContent("Name starts with") {
+                    TextField("LARQ_", text: $m.matchPrefix)
+                        .multilineTextAlignment(.trailing)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+            } header: {
+                Text("Matching")
+            } footer: {
+                Text("Any device advertising a name that starts with this counts as your item, so a rotating name suffix doesn't matter. Another LARQ nearby would also match.")
+            }
+
+            Section {
                 Toggle("Notify When Left Behind", isOn: $m.alertsEnabled)
                 Stepper("Alert after \(Int(m.graceSeconds / 60)) min", value: $m.graceSeconds, in: 60...1800, step: 60)
                 if let t = m.lastSighting {
