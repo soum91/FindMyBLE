@@ -228,9 +228,24 @@ struct ItemDetail: View {
                 .listRowInsets(EdgeInsets())
             }
 
-            Section("Notifications") {
+            if !m.backgroundCapable {
+                Section {
+                    Label("This item doesn't advertise a service ID, so iOS only lets FindMyBLE hear it while the app is open.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote).foregroundStyle(.orange)
+                }
+            }
+
+            Section {
                 Toggle("Notify When Left Behind", isOn: $m.alertsEnabled)
-                Stepper("Alert delay: \(Int(m.graceSeconds))s", value: $m.graceSeconds, in: 0...60, step: 2)
+                Stepper("Alert after \(Int(m.graceSeconds / 60)) min", value: $m.graceSeconds, in: 60...1800, step: 60)
+                if let t = m.lastSighting {
+                    LabeledContent("Last heard") { Text("\(t, style: .relative) ago") }
+                }
+            } header: {
+                Text("Notifications")
+            } footer: {
+                Text("Alerts when the item hasn't been heard from for this long. Lower is faster but more false alarms.")
             }
 
             if let fix = loc.lastSeen {

@@ -24,19 +24,21 @@ Set your team under Signing & Capabilities and run it on your phone. Background 
 
 ## First run
 
-Close the LARQ app first (swipe it away). Open FindMyBLE, allow notifications, allow location and pick **Always** when iOS asks the second time. Tap **+**, filter for LARQ, tap the bottle. It shows "With You" once connected.
+Close the LARQ app first (swipe it away). Open FindMyBLE, allow notifications, allow location and pick **Always** when iOS asks the second time. Tap **+**, filter for LARQ, tap the bottle. It shows "With You" as soon as it hears the bottle. If you added it before this update, remove it and add it again so the app picks up its service ID.
 
 ## How it works
 
-CoreBluetooth holds the connection and keeps a pending connect armed after every drop. iOS keeps that pending connect alive forever in the background, so the app hears about it the moment the item is back. The "left behind" alert is a delayed local notification that gets cancelled if the link returns within the delay window, which is why the delay works even while the app is suspended. State restoration lets iOS relaunch the app in the background for Bluetooth events.
+FindMyBLE doesn't hold a Bluetooth connection. Cheap gadgets like the LARQ cap drop connections to save battery and come back under a new random address, which kills any connection-based tracker. Instead the app listens for the item's advertisements by name. Every time it hears one, it pushes the "left behind" notification further out. If the item goes quiet for longer than the alert time (3 min by default), that notification fires. The notification system owns the timer, so it works even while the app is suspended.
 
-On disconnect the app records the phone's location (the cached fix right away, then a fresh one). BLE range is about 10 to 30 m, so that pin is where the item was left.
+Background scanning on iOS only works for devices that advertise a service UUID. FindMyBLE grabs those when you add the item. If an item has none, it can only be tracked while the app is open, and the item page warns you.
+
+At each sighting the app also saves the phone's location, so the pin marks where it last heard the item.
 
 ## Gotchas
 
 - **Don't force-quit it** from the app switcher. iOS then stops waking it for Bluetooth events.
 - **After a reboot**, open it once. Restoration doesn't survive a restart.
 - **Location must be set to Always**, otherwise the pin only gets saved when the app happens to be open.
-- **The LARQ app may hog the bottle.** Many BLE gadgets accept only one connection. Keep the LARQ app closed and only open it to sync.
-- **The cap may sleep.** If the bottle disconnects on its own to save battery you'll get false alarms. Raise the alert delay. If it still drops every few minutes, connection monitoring won't work for that device and a Find My tag is the reliable answer.
+- **Keep the LARQ app closed.** While it's connected to the bottle, the bottle stops advertising and FindMyBLE can't hear it.
+- **Getting false alarms?** iOS slows down background scanning when the screen is locked, so bump the alert time up a few minutes.
 - Find Nearby and signal strength only update while the app is open.

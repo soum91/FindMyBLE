@@ -3,22 +3,26 @@ import CoreBluetooth
 import UserNotifications
 import Combine
 
-/// Holds a connection to one BLE peripheral and alerts when it drops.
-/// Works in the background via the bluetooth-central background mode + state restoration.
+/// Presence-based tracker. Instead of holding a connection (which cheap gadgets like the
+/// LARQ cap drop to save battery, then come back under a new random address), it listens
+/// for the item's advertisements by name. Every sighting pushes the "left behind" alert
+/// further into the future. If the item goes quiet for longer than the away timeout,
+/// the alert fires, even with the app suspended, because the notification system owns the timer.
 final class BLEMonitor: NSObject, ObservableObject {
     static let shared = BLEMonitor()
 
     static let restoreID = "com.soumen.findmyble.central"
-    private let savedIDKey = "watchedPeripheralID"
     private let savedNameKey = "watchedPeripheralName"
-    private let graceKey = "graceSeconds"
-    private let lostAlertID = "ble-lost-alert"
+    private let savedServicesKey = "watchedServiceUUIDs"
+    private let timeoutKey = "awayTimeout"
     private let alertsKey = "alertsEnabled"
+    private let lastSeenKey = "lastSightingDate"
+    private let lostAlertID = "ble-lost-alert"
 
     enum LinkStatus: String {
         case idle = "Not watching"
-        case connecting = "Connecting..."
-        case connected = "Connected"
+        case connecting = "Searching..."
+        case connected = "With You"
         case lost = "LOST"
     }
 
@@ -26,7 +30,7 @@ final class BLEMonitor: NSObject, ObservableObject {
         let id: UUID
         let name: String
         var rssi: Int
-        let peripheral: CBPeripheral
+        var services: [CBUUID]
     }
 
     @Published var btState: CBManagerState = .unknown
@@ -35,30 +39,44 @@ final class BLEMonitor: NSObject, ObservableObject {
     @Published var status: LinkStatus = .idle
     @Published var watchedName: String?
     @Published var rssi: Int?
+    /// When the item was last heard from, i.e. when it went missing once status is .lost.
     @Published var lastLost: Date?
-    /// Seconds to wait before alerting. If it reconnects within this window, no alert fires.
+    @Published var lastSighting: Date?
+    /// False when the item advertises no service UUID. iOS only lets apps scan for those
+    /// in the background, so such an item is tracked only while the app is open.
+    @Published var backgroundCapable = true
+
+    /// Seconds without a sighting before it counts as left behind.
     @Published var graceSeconds: Double {
-        didSet { UserDefaults.standard.set(graceSeconds, forKey: graceKey) }
+        didSet {
+            UserDefaults.standard.set(graceSeconds, forKey: timeoutKey)
+            if lastSighting != nil { rescheduleLostAlert() }
+        }
     }
 
-    /// "Notify When Left Behind". Off = keep tracking, no notifications.
     @Published var alertsEnabled: Bool {
         didSet {
             UserDefaults.standard.set(alertsEnabled, forKey: alertsKey)
-            if !alertsEnabled { cancelLostAlert() }
+            alertsEnabled ? rescheduleLostAlert() : cancelLostAlert()
         }
     }
 
     private var central: CBCentralManager!
-    private var watched: CBPeripheral?
-    private var rssiTimer: Timer?
+    private var watchedServices: [CBUUID] = []
+    private var lastScanRestart = Date.distantPast
+    private var tick: Timer?
 
     private override init() {
-        let g = UserDefaults.standard.double(forKey: graceKey)
-        graceSeconds = g == 0 ? 8 : g
-        watchedName = UserDefaults.standard.string(forKey: savedNameKey)
+        let t = UserDefaults.standard.double(forKey: timeoutKey)
+        graceSeconds = t == 0 ? 180 : t
         alertsEnabled = UserDefaults.standard.object(forKey: alertsKey) as? Bool ?? true
+        watchedName = UserDefaults.standard.string(forKey: savedNameKey)
+        watchedServices = (UserDefaults.standard.stringArray(forKey: savedServicesKey) ?? []).map(CBUUID.init(string:))
+        lastSighting = UserDefaults.standard.object(forKey: lastSeenKey) as? Date
         super.init()
+
+        backgroundCapable = watchedServices.isEmpty == false
+        status = watchedName == nil ? .idle : .connecting
 
         UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
@@ -69,75 +87,120 @@ final class BLEMonitor: NSObject, ObservableObject {
             options: [CBCentralManagerOptionRestoreIdentifierKey: Self.restoreID,
                       CBCentralManagerOptionShowPowerAlertKey: true]
         )
+
+        // Foreground-only clock so the UI flips to "Left Behind" on time.
+        tick = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            self?.refreshStatus()
+        }
     }
 
     // MARK: - Public
 
+    /// Scan for the Add Item list.
     func startScan() {
-        guard central.state == .poweredOn else { return }
         devices.removeAll()
         isScanning = true
-        central.scanForPeripherals(withServices: nil,
-                                   options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
+        updateScan(force: true)
     }
 
     func stopScan() {
-        central.stopScan()
         isScanning = false
+        updateScan(force: true)
     }
 
     func watch(_ device: Device) {
-        stopScan()
-        if let old = watched, old.identifier != device.id { central.cancelPeripheralConnection(old) }
-        UserDefaults.standard.set(device.id.uuidString, forKey: savedIDKey)
-        UserDefaults.standard.set(device.name, forKey: savedNameKey)
+        isScanning = false
         watchedName = device.name
-        attach(device.peripheral)
+        watchedServices = device.services
+        backgroundCapable = !device.services.isEmpty
+        UserDefaults.standard.set(device.name, forKey: savedNameKey)
+        UserDefaults.standard.set(device.services.map(\.uuidString), forKey: savedServicesKey)
+        lastLost = nil
+        sighted(rssi: device.rssi, notifyBack: false)
+        updateScan(force: true)
     }
 
     func unwatch() {
-        if let p = watched { central.cancelPeripheralConnection(p) }
-        watched = nil
-        UserDefaults.standard.removeObject(forKey: savedIDKey)
-        UserDefaults.standard.removeObject(forKey: savedNameKey)
         watchedName = nil
+        watchedServices = []
+        UserDefaults.standard.removeObject(forKey: savedNameKey)
+        UserDefaults.standard.removeObject(forKey: savedServicesKey)
+        UserDefaults.standard.removeObject(forKey: lastSeenKey)
+        lastSighting = nil
+        lastLost = nil
         status = .idle
         rssi = nil
-        stopRSSI()
         cancelLostAlert()
+        updateScan(force: true)
     }
 
-    // MARK: - Internals
+    // MARK: - Scanning
 
-    private func attach(_ p: CBPeripheral) {
-        watched = p
-        p.delegate = self
-        status = .connecting
-        // A pending connect never times out on iOS. If the device is out of range,
-        // iOS keeps trying in the background and calls didConnect when it comes back.
-        central.connect(p, options: nil)
+    private func updateScan(force: Bool = false) {
+        guard central.state == .poweredOn else { return }
+        let wantWatch = watchedName != nil
+        guard isScanning || wantWatch else { central.stopScan(); return }
+        guard force || Date().timeIntervalSince(lastScanRestart) > 20 else { return }
+
+        // Add-item scanning happens on screen, so no filter. Watching uses the item's
+        // service UUIDs when it has them, which is what makes background scanning work.
+        let services: [CBUUID]? = isScanning || watchedServices.isEmpty ? nil : watchedServices
+        central.stopScan()
+        central.scanForPeripherals(withServices: services,
+                                   options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
+        lastScanRestart = Date()
     }
 
-    private func reattachSaved() {
-        guard watched == nil,
-              let s = UserDefaults.standard.string(forKey: savedIDKey),
-              let id = UUID(uuidString: s),
-              let p = central.retrievePeripherals(withIdentifiers: [id]).first else { return }
-        attach(p)
+    /// The item was heard from.
+    private func sighted(rssi r: Int, notifyBack: Bool = true) {
+        let now = Date()
+        let wasAway = lastSighting.map { now.timeIntervalSince($0) > graceSeconds } ?? false
+
+        if notifyBack, wasAway, alertsEnabled {
+            let c = UNMutableNotificationContent()
+            c.title = "\(watchedName ?? "Item") is back with you"
+            UNUserNotificationCenter.current().add(
+                UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
+        }
+
+        lastSighting = now
+        UserDefaults.standard.set(now, forKey: lastSeenKey)
+        rssi = r
+        status = .connected
+        lastLost = nil
+
+        // "Where you left it" is wherever the phone was at the last sighting.
+        if let fix = LocationRecorder.shared.lastSeen?.date, now.timeIntervalSince(fix) < 90 {
+            // fresh enough
+        } else {
+            LocationRecorder.shared.recordNow()
+        }
+
+        rescheduleLostAlert()
+        // In the background iOS reports each device once per scan; restarting the scan
+        // now and then resets that, so sightings keep coming while it's in range.
+        updateScan()
     }
 
-    private func scheduleLostAlert() {
-        guard alertsEnabled else { return }
+    private func refreshStatus() {
+        guard watchedName != nil else { return }
+        guard let seen = lastSighting else { status = .connecting; return }
+        if Date().timeIntervalSince(seen) > graceSeconds {
+            if status != .lost { status = .lost; lastLost = seen; rssi = nil }
+        }
+    }
+
+    // MARK: - Alerts
+
+    private func rescheduleLostAlert() {
+        cancelLostAlert()
+        guard alertsEnabled, watchedName != nil else { return }
         let c = UNMutableNotificationContent()
-        c.title = "\(watchedName ?? "Device") disconnected"
-        c.body = "You might have left it behind. Tap to see where it was last seen."
+        c.title = "\(watchedName ?? "Item") left behind"
+        c.body = "Not heard from in \(Int(graceSeconds / 60)) min. Tap to see where it was last seen."
         c.sound = .defaultCritical
         c.interruptionLevel = .timeSensitive
-        // Scheduled through the notification system so it fires even while the app is suspended.
-        // Cancelled in didConnect if the link comes back inside the grace window.
-        let trigger = graceSeconds >= 1
-            ? UNTimeIntervalNotificationTrigger(timeInterval: graceSeconds, repeats: false)
-            : nil
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(graceSeconds, 30), repeats: false)
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: lostAlertID, content: c, trigger: trigger))
     }
@@ -145,88 +208,41 @@ final class BLEMonitor: NSObject, ObservableObject {
     private func cancelLostAlert() {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [lostAlertID])
     }
-
-    private func startRSSI() {
-        stopRSSI()
-        rssiTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            self?.watched?.readRSSI()
-        }
-    }
-
-    private func stopRSSI() {
-        rssiTimer?.invalidate()
-        rssiTimer = nil
-    }
 }
 
 // MARK: - CBCentralManagerDelegate
 
 extension BLEMonitor: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
-        // iOS relaunched us in the background. Grab the peripheral we were holding.
-        if let ps = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral], let p = ps.first {
-            watched = p
-            p.delegate = self
-            status = p.state == .connected ? .connected : .connecting
-        }
+        // Relaunched in the background; the restored scan keeps running. Nothing to rebuild.
     }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         btState = central.state
-        guard central.state == .poweredOn else { return }
-        if let p = watched {
-            if p.state != .connected { central.connect(p, options: nil) }
-        } else {
-            reattachSaved()
-        }
+        if central.state == .poweredOn { updateScan(force: true) }
     }
 
     func centralManager(_ central: CBCentralManager, didDiscover p: CBPeripheral,
-                        advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        let name = p.name ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String)
-        guard let name, RSSI.intValue != 127 else { return }
-        if let i = devices.firstIndex(where: { $0.id == p.identifier }) {
-            devices[i].rssi = RSSI.intValue
+                        advertisementData ad: [String: Any], rssi RSSI: NSNumber) {
+        let r = RSSI.intValue
+        guard r != 127 else { return }
+        let name = (ad[CBAdvertisementDataLocalNameKey] as? String) ?? p.name
+        let services = (ad[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
+
+        if let watched = watchedName, name == watched {
+            sighted(rssi: r)
+        }
+
+        guard isScanning, let name else { return }
+        // Group by name, not peripheral ID: an address-rotating device would
+        // otherwise show up as a new row every few minutes.
+        if let i = devices.firstIndex(where: { $0.name == name }) {
+            devices[i].rssi = r
+            for s in services where !devices[i].services.contains(s) { devices[i].services.append(s) }
         } else {
-            devices.append(Device(id: p.identifier, name: name, rssi: RSSI.intValue, peripheral: p))
+            devices.append(Device(id: p.identifier, name: name, rssi: r, services: services))
         }
         devices.sort { $0.rssi > $1.rssi }
-    }
-
-    func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) {
-        cancelLostAlert()
-        if alertsEnabled, status == .lost, let lost = lastLost, Date().timeIntervalSince(lost) > graceSeconds {
-            let c = UNMutableNotificationContent()
-            c.title = "\(watchedName ?? "Device") is back in range"
-            UNUserNotificationCenter.current().add(
-                UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
-        }
-        status = .connected
-        startRSSI()
-    }
-
-    func centralManager(_ central: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
-        guard p.identifier == watched?.identifier else { return }
-        stopRSSI()
-        rssi = nil
-        status = .lost
-        lastLost = Date()
-        LocationRecorder.shared.recordNow()
-        scheduleLostAlert()
-        central.connect(p, options: nil) // re-arm so we know when it's back
-    }
-
-    func centralManager(_ central: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
-        guard p.identifier == watched?.identifier else { return }
-        central.connect(p, options: nil)
-    }
-}
-
-// MARK: - CBPeripheralDelegate
-
-extension BLEMonitor: CBPeripheralDelegate {
-    func peripheral(_ peripheral: CBPeripheral, didReadRSSI RSSI: NSNumber, error: Error?) {
-        if error == nil { rssi = RSSI.intValue }
     }
 }
 
@@ -235,6 +251,7 @@ extension BLEMonitor: CBPeripheralDelegate {
 extension BLEMonitor: UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent n: UNNotification,
                                 withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void) {
+        refreshStatus()
         done([.banner, .sound, .list])
     }
 }
