@@ -124,6 +124,11 @@ final class BLEMonitor: NSObject, ObservableObject {
     /// The peripheral we currently hold or are connecting to. Retained so iOS keeps the link.
     private var connected: CBPeripheral?
     private var uartWriteChar: CBCharacteristic?
+    /// Last peripheral that matched our item, so the finder can connect on demand.
+    private var lastSeenPeripheral: CBPeripheral?
+    /// True while the Find Nearby screen is open: connect and poll signal fast, then let go.
+    private var finding = false
+    private var rssiPoll: Timer?
 
     private override init() {
         let t = UserDefaults.standard.double(forKey: timeoutKey)
@@ -236,8 +241,45 @@ final class BLEMonitor: NSObject, ObservableObject {
         battery = nil
         isConnected = false
         uartWriteChar = nil
+        stopRssiPoll()
         if let p = connected { central.cancelPeripheralConnection(p) }
         connected = nil
+    }
+
+    /// Find Nearby opened: grab a live connection (even if Keep Connected is off) and poll signal
+    /// fast, because connection RSSI updates steadily while advertisements barely trickle in.
+    func beginFinding() {
+        finding = true
+        if let p = connected ?? lastSeenPeripheral {
+            connected = p
+            p.delegate = self
+            if p.state != .connected { central.connect(p, options: nil) }
+            startRssiPoll()
+        }
+    }
+
+    func endFinding() {
+        finding = false
+        stopRssiPoll()
+        // Drop the finder's temporary connection unless the user asked to hold it.
+        if !holdConnection, let p = connected, p.state == .connected || p.state == .connecting {
+            central.cancelPeripheralConnection(p)
+            connected = nil
+            isConnected = false
+        }
+    }
+
+    private func startRssiPoll() {
+        stopRssiPoll()
+        rssiPoll = Timer.scheduledTimer(withTimeInterval: 1.2, repeats: true) { [weak self] _ in
+            guard let self, let p = self.connected, p.state == .connected else { return }
+            p.readRSSI()
+        }
+    }
+
+    private func stopRssiPoll() {
+        rssiPoll?.invalidate()
+        rssiPoll = nil
     }
 
     private func sendPowerSavingOff() {
@@ -395,6 +437,8 @@ extension BLEMonitor: CBCentralManagerDelegate {
         cancelLostAlert()
         LocationRecorder.shared.recordNow()
         if alertOnLeaveArea { LocationRecorder.shared.armGeofence(radius: areaRadius) }
+        if finding { startRssiPoll() }
+        p.readRSSI()
         p.discoverServices(Larq.allServices)
     }
 
@@ -403,6 +447,7 @@ extension BLEMonitor: CBCentralManagerDelegate {
         isConnected = false
         battery = nil
         uartWriteChar = nil
+        stopRssiPoll()
         // Just lost the link. Count grace from now, and record where we were, in case this is
         // the moment it got left behind. Advertisements resume feeding the timer if still in range.
         lastSighting = Date()
@@ -411,8 +456,8 @@ extension BLEMonitor: CBCentralManagerDelegate {
         // Area mode: centre the geofence where we lost it; the exit is what alerts, not a timer.
         if alertOnLeaveArea { LocationRecorder.shared.armGeofence(radius: areaRadius) }
         else { rescheduleLostAlert() }
-        // Keep the link if the user still wants it; iOS reconnects when the cap is back.
-        if holdConnection { central.connect(p, options: nil) } else { connected = nil }
+        // Reconnect if the user holds the link, or while actively finding. Else let go.
+        if holdConnection || finding { central.connect(p, options: nil) } else { connected = nil }
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
@@ -428,8 +473,10 @@ extension BLEMonitor: CBCentralManagerDelegate {
         let services = (ad[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
 
         if watchedName != nil, let name, matches(name) {
+            lastSeenPeripheral = p
             sighted(rssi: r)
             connectIfNeeded(p)
+            if finding, connected == nil { beginFinding() }
         }
 
         guard isScanning, let name else { return }
@@ -469,6 +516,12 @@ extension BLEMonitor: CBPeripheralDelegate {
                 break
             }
         }
+    }
+
+    func peripheral(_ p: CBPeripheral, didReadRSSI RSSI: NSNumber, error: Error?) {
+        guard error == nil, RSSI.intValue != 127 else { return }
+        rssi = RSSI.intValue
+        rssiAt = Date()
     }
 
     func peripheral(_ p: CBPeripheral, didUpdateValueFor c: CBCharacteristic, error: Error?) {

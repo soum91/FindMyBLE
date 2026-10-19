@@ -390,7 +390,8 @@ struct FindNearbyView: View {
             now = t
             if let r = m.rssi, fresh, r > peak { peak = r }
         }
-        .onAppear { if let r = m.rssi { peak = r } }
+        .onAppear { m.beginFinding(); if let r = m.rssi { peak = r } }
+        .onDisappear { m.endFinding() }
     }
 
     private var fresh: Bool {
