@@ -221,8 +221,8 @@ struct ItemDetail: View {
                                subtitle: loc.lastSeen == nil ? "No location" : "Last seen spot",
                                enabled: loc.lastSeen != nil) { openInMaps() }
                     ActionCard(title: "Find Nearby", icon: "dot.radiowaves.left.and.right",
-                               subtitle: m.status == .connected ? "In range" : "Out of range",
-                               enabled: m.status == .connected) { showNearby = true }
+                               subtitle: m.status == .connected ? "In range" : "Listen for signal",
+                               enabled: true) { showNearby = true }
                 }
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets())
@@ -347,6 +347,15 @@ struct FindNearbyView: View {
     @ObservedObject var m = BLEMonitor.shared
     @Environment(\.dismiss) private var dismiss
 
+    // Self-calibrating: the strongest signal seen this session becomes "here", everything
+    // scales from there. This cap advertises weakly, so fixed dBm thresholds are useless.
+    @State private var peak: Int = -100
+    @State private var now = Date()
+    private let clock = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
+
+    /// A reading older than this is stale (the cap went quiet), not "far".
+    private let freshWindow: TimeInterval = 8
+
     var body: some View {
         ZStack {
             LinearGradient(colors: [Color(red: 0.04, green: 0.36, blue: 0.78),
@@ -361,34 +370,55 @@ struct FindNearbyView: View {
                 .foregroundStyle(.white)
                 Spacer()
                 ZStack {
-                    Circle().stroke(.white.opacity(0.15), lineWidth: 2).frame(width: 280, height: 280)
-                    Circle().fill(.white.opacity(0.9))
-                        .frame(width: 280 * closeness, height: 280 * closeness)
+                    Circle().stroke(.white.opacity(0.15), lineWidth: 2).frame(width: 290, height: 290)
+                    Circle().fill(.white.opacity(fresh ? 0.9 : 0.25))
+                        .frame(width: 290 * closeness, height: 290 * closeness)
                         .animation(.spring(duration: 0.6), value: closeness)
                 }
-                Text(label).font(.system(size: 40, weight: .bold)).foregroundStyle(.white)
-                Text(m.rssi.map { "\($0) dBm" } ?? "No signal").foregroundStyle(.white.opacity(0.7))
+                Text(label).font(.system(size: 38, weight: .bold)).foregroundStyle(.white)
+                Text(detail).font(.subheadline).foregroundStyle(.white.opacity(0.7))
                 Spacer()
-                Text("Walk around. The circle grows as you get closer.")
+                Text(fresh
+                     ? "Move around. The circle grows as you get closer. Pick up or jostle the bottle to wake it if it's quiet."
+                     : "Waiting to hear the cap. It sleeps to save battery, so give it a shake or open the lid.")
                     .font(.footnote).foregroundStyle(.white.opacity(0.7))
+                    .multilineTextAlignment(.center)
             }
             .padding()
         }
+        .onReceive(clock) { t in
+            now = t
+            if let r = m.rssi, fresh, r > peak { peak = r }
+        }
+        .onAppear { if let r = m.rssi { peak = r } }
     }
 
-    /// Maps roughly -95 dBm (far) .. -45 dBm (on top of it) to 0.15 .. 1
+    private var fresh: Bool {
+        guard let at = m.rssiAt else { return false }
+        return now.timeIntervalSince(at) < freshWindow
+    }
+
+    /// 0.12 .. 1 scaled over a 25 dB window below the strongest signal seen.
     private var closeness: CGFloat {
-        guard let r = m.rssi else { return 0.1 }
-        return min(1, max(0.15, CGFloat(r + 95) / 50))
+        guard fresh, let r = m.rssi else { return 0.12 }
+        let span = 25.0
+        let ratio = (Double(r) - (Double(peak) - span)) / span
+        return CGFloat(min(1, max(0.12, ratio)))
     }
 
     private var label: String {
-        guard let r = m.rssi else { return "Searching" }
-        switch r {
-        case (-55)...: return "Here"
-        case (-70)...: return "Nearby"
-        default: return "Far"
+        guard fresh else { return "Listening" }
+        switch closeness {
+        case 0.75...: return "Here"
+        case 0.45...: return "Nearby"
+        default: return "Keep Looking"
         }
+    }
+
+    private var detail: String {
+        guard let r = m.rssi else { return "No signal yet" }
+        if !fresh { return "Last signal \(Int(now.timeIntervalSince(m.rssiAt ?? now)))s ago" }
+        return "\(r) dBm"
     }
 }
 

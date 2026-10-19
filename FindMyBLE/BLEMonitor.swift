@@ -43,6 +43,8 @@ final class BLEMonitor: NSObject, ObservableObject {
     @Published var status: LinkStatus = .idle
     @Published var watchedName: String?
     @Published var rssi: Int?
+    /// When the current rssi reading arrived, so the finder can tell live from stale.
+    @Published var rssiAt: Date?
     /// When the item was last heard from, i.e. when it went missing once status is .lost.
     @Published var lastLost: Date?
     @Published var lastSighting: Date?
@@ -293,6 +295,7 @@ final class BLEMonitor: NSObject, ObservableObject {
         lastSighting = now
         UserDefaults.standard.set(now, forKey: lastSeenKey)
         rssi = r
+        rssiAt = now
         status = .connected
         lastLost = nil
 
