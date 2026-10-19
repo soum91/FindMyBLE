@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-15
@@ -35,3 +38,14 @@ jobs:
         with:
           name: FindMyBLE-unsigned-ipa
           path: FindMyBLE-unsigned.ipa
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: FindMyBLE v1.0.${{ github.run_number }}
+          body: |
+            Unsigned build of ${{ github.sha }}.
+            Install FindMyBLE-unsigned.ipa with Sideloadly, AltStore or TrollStore.
+          files: FindMyBLE-unsigned.ipa
+          make_latest: true

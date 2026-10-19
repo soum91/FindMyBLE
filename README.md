@@ -10,7 +10,7 @@ The full-screen map shows you and your item's last-seen pin. The bottom sheet ha
 
 ## Getting it on your phone
 
-**Option A: grab the IPA.** Every push to `main` builds an unsigned IPA through GitHub Actions. Open the Actions tab, go into the latest "Build unsigned IPA" run, download `FindMyBLE-unsigned-ipa`, unzip it and install with Sideloadly, AltStore or TrollStore.
+**Option A: grab the IPA.** Every push to `main` builds an unsigned IPA and publishes it as a release. Download `FindMyBLE-unsigned.ipa` from the [latest release](../../releases/latest) and install with Sideloadly, AltStore or TrollStore.
 
 **Option B: build it yourself on a Mac.**
 
