@@ -34,6 +34,12 @@ Background scanning on iOS only works for devices that advertise a service UUID.
 
 At each sighting the app also saves the phone's location, so the pin marks where it last heard the item.
 
+## Keep Connected (optional)
+
+By default the app only listens for advertisements and never connects. Turn on **Keep Connected** on the item page and it holds an open BLE connection instead. A connected peripheral usually keeps its radio awake, which is what stops the LARQ cap from dropping off every few minutes, and it lets the cap report its battery level over the standard battery service. Presence tracking keeps running underneath, so left-behind alerts still work if the connection drops.
+
+For a LARQ cap there's also **Stop Cap Power-Saving**, which sends the cap its own "power saving off" command so it keeps advertising. This is LARQ-specific, harmless, and just costs a little cap battery. It only touches the power-saving setting, nothing else on the cap.
+
 ## Gotchas
 
 - **Don't force-quit it** from the app switcher. iOS then stops waking it for Bluetooth events.

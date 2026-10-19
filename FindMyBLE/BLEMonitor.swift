@@ -18,6 +18,8 @@ final class BLEMonitor: NSObject, ObservableObject {
     private let timeoutKey = "awayTimeout"
     private let alertsKey = "alertsEnabled"
     private let lastSeenKey = "lastSightingDate"
+    private let holdKey = "holdConnection"
+    private let powerSaveOffKey = "disablePowerSaving"
     private let lostAlertID = "ble-lost-alert"
 
     enum LinkStatus: String {
@@ -68,15 +70,43 @@ final class BLEMonitor: NSObject, ObservableObject {
         }
     }
 
+    /// Hold an open connection to the item instead of only listening for advertisements.
+    /// A connected peripheral usually keeps its radio awake, which stops the LARQ cap from
+    /// dropping off. Presence tracking keeps running underneath, so left-behind still works.
+    @Published var holdConnection: Bool {
+        didSet {
+            UserDefaults.standard.set(holdConnection, forKey: holdKey)
+            if holdConnection { updateScan(force: true) } else { dropConnection() }
+        }
+    }
+
+    /// When connected, tell the cap to turn its power-saving mode off (LARQ only, harmless).
+    @Published var disablePowerSaving: Bool {
+        didSet {
+            UserDefaults.standard.set(disablePowerSaving, forKey: powerSaveOffKey)
+            if disablePowerSaving, connected?.state == .connected { sendPowerSavingOff() }
+        }
+    }
+
+    /// Battery level read over the standard service while connected. Nil when not connected.
+    @Published var battery: Int?
+    @Published var isConnected = false
+
     private var central: CBCentralManager!
     private var watchedServices: [CBUUID] = []
     private var lastScanRestart = Date.distantPast
     private var tick: Timer?
 
+    /// The peripheral we currently hold or are connecting to. Retained so iOS keeps the link.
+    private var connected: CBPeripheral?
+    private var uartWriteChar: CBCharacteristic?
+
     private override init() {
         let t = UserDefaults.standard.double(forKey: timeoutKey)
         graceSeconds = t == 0 ? 180 : t
         alertsEnabled = UserDefaults.standard.object(forKey: alertsKey) as? Bool ?? true
+        holdConnection = UserDefaults.standard.object(forKey: holdKey) as? Bool ?? false
+        disablePowerSaving = UserDefaults.standard.object(forKey: powerSaveOffKey) as? Bool ?? false
         watchedName = UserDefaults.standard.string(forKey: savedNameKey)
         matchPrefix = UserDefaults.standard.string(forKey: matchKey)
             ?? UserDefaults.standard.string(forKey: savedNameKey).map { BLEMonitor.defaultPrefix(for: $0) } ?? ""
@@ -140,8 +170,34 @@ final class BLEMonitor: NSObject, ObservableObject {
         lastLost = nil
         status = .idle
         rssi = nil
+        dropConnection()
         cancelLostAlert()
         updateScan(force: true)
+    }
+
+    // MARK: - Connection hold (optional)
+
+    private func connectIfNeeded(_ p: CBPeripheral) {
+        guard holdConnection else { return }
+        guard connected?.identifier != p.identifier || p.state == .disconnected else { return }
+        connected = p
+        p.delegate = self
+        central.connect(p, options: nil)
+    }
+
+    private func dropConnection() {
+        battery = nil
+        isConnected = false
+        uartWriteChar = nil
+        if let p = connected { central.cancelPeripheralConnection(p) }
+        connected = nil
+    }
+
+    private func sendPowerSavingOff() {
+        guard disablePowerSaving, let p = connected, let ch = uartWriteChar else { return }
+        let type: CBCharacteristicWriteType =
+            ch.properties.contains(.write) ? .withResponse : .withoutResponse
+        p.writeValue(Larq.powerSavingOff(), for: ch, type: type)
     }
 
     // MARK: - Name matching
@@ -240,12 +296,36 @@ final class BLEMonitor: NSObject, ObservableObject {
 
 extension BLEMonitor: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
-        // Relaunched in the background; the restored scan keeps running. Nothing to rebuild.
+        // Relaunched in the background; reclaim any connection we were holding.
+        if let ps = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral], let p = ps.first {
+            connected = p
+            p.delegate = self
+        }
     }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         btState = central.state
         if central.state == .poweredOn { updateScan(force: true) }
+    }
+
+    func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) {
+        guard p.identifier == connected?.identifier else { return }
+        isConnected = true
+        p.discoverServices(Larq.allServices)
+    }
+
+    func centralManager(_ central: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
+        guard p.identifier == connected?.identifier else { return }
+        isConnected = false
+        battery = nil
+        uartWriteChar = nil
+        // Keep the link if the user still wants it; iOS reconnects when the cap is back.
+        if holdConnection { central.connect(p, options: nil) } else { connected = nil }
+    }
+
+    func centralManager(_ central: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
+        guard p.identifier == connected?.identifier, holdConnection else { return }
+        central.connect(p, options: nil)
     }
 
     func centralManager(_ central: CBCentralManager, didDiscover p: CBPeripheral,
@@ -257,6 +337,7 @@ extension BLEMonitor: CBCentralManagerDelegate {
 
         if watchedName != nil, let name, matches(name) {
             sighted(rssi: r)
+            connectIfNeeded(p)
         }
 
         guard isScanning, let name else { return }
@@ -269,6 +350,42 @@ extension BLEMonitor: CBCentralManagerDelegate {
             devices.append(Device(id: p.identifier, name: name, rssi: r, services: services))
         }
         devices.sort { $0.rssi > $1.rssi }
+    }
+}
+
+// MARK: - CBPeripheralDelegate (connection-hold extras)
+
+extension BLEMonitor: CBPeripheralDelegate {
+    func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
+        for s in p.services ?? [] {
+            p.discoverCharacteristics(nil, for: s)
+        }
+    }
+
+    func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor s: CBService, error: Error?) {
+        for c in s.characteristics ?? [] {
+            switch c.uuid {
+            case Larq.batteryLevel:
+                p.setNotifyValue(true, for: c)
+                p.readValue(for: c)
+            case Larq.uartNotify:
+                p.setNotifyValue(true, for: c)
+            case Larq.uartWrite:
+                uartWriteChar = c
+                sendPowerSavingOff()
+            default:
+                break
+            }
+        }
+    }
+
+    func peripheral(_ p: CBPeripheral, didUpdateValueFor c: CBCharacteristic, error: Error?) {
+        guard error == nil, let data = c.value else { return }
+        if c.uuid == Larq.batteryLevel, let b = data.first {
+            battery = Int(b)
+        }
+        // UART notifications (c.uuid == Larq.uartNotify) are command responses; we don't
+        // parse them here, the power-saving write is fire-and-forget.
     }
 }
 

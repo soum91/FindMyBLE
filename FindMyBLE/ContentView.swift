@@ -250,6 +250,21 @@ struct ItemDetail: View {
             }
 
             Section {
+                Toggle("Keep Connected", isOn: $m.holdConnection)
+                if m.holdConnection {
+                    LabeledContent("Link") { Text(m.isConnected ? "Connected" : "Reconnecting...") }
+                    if let b = m.battery {
+                        LabeledContent("Battery") { Text("\(b)%") }
+                    }
+                    Toggle("Stop Cap Power-Saving", isOn: $m.disablePowerSaving)
+                }
+            } header: {
+                Text("Connection")
+            } footer: {
+                Text("Keeping a live connection usually stops the cap from dropping off, and lets it report battery. Stop Cap Power-Saving tells a LARQ cap to keep its radio awake (LARQ only, uses a little more cap battery).")
+            }
+
+            Section {
                 Toggle("Notify When Left Behind", isOn: $m.alertsEnabled)
                 Stepper("Alert after \(Int(m.graceSeconds / 60)) min", value: $m.graceSeconds, in: 60...1800, step: 60)
                 if let t = m.lastSighting {
