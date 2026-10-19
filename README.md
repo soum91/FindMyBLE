@@ -34,6 +34,10 @@ Background scanning on iOS only works for devices that advertise a service UUID.
 
 At each sighting the app also saves the phone's location, so the pin marks where it last heard the item.
 
+## Why "Only When I Leave the Area"
+
+The LARQ cap goes radio-silent for ten-plus minutes at a time even when it's sitting right next to you, so any "haven't heard it in N minutes" alarm fires while you're in the next room. The default alert mode ignores time entirely. It drops a geofence around wherever the cap was last heard and only alerts when your phone actually leaves that area without the cap coming along. Sit at home all day with a napping cap and you get nothing; walk out the door without it and you get the alert. There's a short grace after you leave so a cap that wakes on movement (it has an accelerometer) can check in before anything fires. This needs location set to Always. Turn the toggle off on the item page if you'd rather have the simple time-based alarm.
+
 ## Keep Connected (optional)
 
 By default the app only listens for advertisements and never connects. Turn on **Keep Connected** on the item page and it holds an open BLE connection instead. A connected peripheral usually keeps its radio awake, which is what stops the LARQ cap from dropping off every few minutes, and it lets the cap report its battery level over the standard battery service. Presence tracking keeps running underneath, so left-behind alerts still work if the connection drops.

@@ -22,7 +22,7 @@ targets:
       properties:
         CFBundleDisplayName: FindMyBLE
         UILaunchScreen: {}
-        UIBackgroundModes: [bluetooth-central]
+        UIBackgroundModes: [bluetooth-central, location]
         NSBluetoothAlwaysUsageDescription: Watches your items so you don't leave them behind.
         NSLocationWhenInUseUsageDescription: Saves where your item was when it disconnected.
         NSLocationAlwaysAndWhenInUseUsageDescription: Saves where your item was when it disconnected, even when the app is in the background.

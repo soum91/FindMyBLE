@@ -19,10 +19,16 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     @Published var lastSeen: Fix?
     @Published var authStatus: CLAuthorizationStatus = .notDetermined
 
+    /// Called when the phone leaves the area where the item was last heard. Background-safe:
+    /// region monitoring relaunches the app to deliver this.
+    var onLeftArea: (() -> Void)?
+
     private let manager = CLLocationManager()
     private let storeKey = "lastSeenFix"
+    private let regionID = "item-area"
     private var bgTask: UIBackgroundTaskIdentifier = .invalid
     private var pending = false
+    private var pendingArmRadius: Double?
 
     private override init() {
         super.init()
@@ -62,6 +68,37 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         manager.requestLocation()
     }
 
+    // MARK: Geofence around the item's current spot
+
+    /// (Re)centre a geofence on where we are now. Call this whenever we have BLE contact,
+    /// so "the area the item is in" tracks the item while it's with you.
+    func armGeofence(radius: Double) {
+        guard authStatus == .authorizedAlways else { return }
+        guard CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else { return }
+        if let loc = manager.location, Date().timeIntervalSince(loc.timestamp) < 120 {
+            startRegion(center: loc.coordinate, radius: radius)
+        } else {
+            pendingArmRadius = radius
+            manager.requestLocation()
+        }
+    }
+
+    func disarmGeofence() {
+        pendingArmRadius = nil
+        for r in manager.monitoredRegions where r.identifier == regionID {
+            manager.stopMonitoring(for: r)
+        }
+    }
+
+    private func startRegion(center: CLLocationCoordinate2D, radius: Double) {
+        disarmGeofence()
+        let clamped = min(max(radius, 50), manager.maximumRegionMonitoringDistance)
+        let region = CLCircularRegion(center: center, radius: clamped, identifier: regionID)
+        region.notifyOnEntry = false
+        region.notifyOnExit = true
+        manager.startMonitoring(for: region)
+    }
+
     private func save(_ loc: CLLocation) {
         let f = Fix(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude,
                     accuracy: loc.horizontalAccuracy, date: loc.timestamp)
@@ -85,11 +122,19 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     func locationManager(_ m: CLLocationManager, didUpdateLocations locs: [CLLocation]) {
         if pending, let loc = locs.last { save(loc) }
         pending = false
+        if let r = pendingArmRadius, let loc = locs.last {
+            pendingArmRadius = nil
+            startRegion(center: loc.coordinate, radius: r)
+        }
         endBG()
     }
 
     func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {
         pending = false
         endBG()
+    }
+
+    func locationManager(_ m: CLLocationManager, didExitRegion region: CLRegion) {
+        if region.identifier == regionID { onLeftArea?() }
     }
 }

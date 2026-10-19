@@ -266,14 +266,21 @@ struct ItemDetail: View {
 
             Section {
                 Toggle("Notify When Left Behind", isOn: $m.alertsEnabled)
-                Stepper("Alert after \(Int(m.graceSeconds / 60)) min", value: $m.graceSeconds, in: 60...1800, step: 60)
+                if m.alertsEnabled {
+                    Toggle("Only When I Leave the Area", isOn: $m.alertOnLeaveArea)
+                    if !m.alertOnLeaveArea {
+                        Stepper("Alert after \(Int(m.graceSeconds / 60)) min", value: $m.graceSeconds, in: 60...1800, step: 60)
+                    }
+                }
                 if let t = m.lastSighting {
                     LabeledContent("Last heard") { Text("\(t, style: .relative) ago") }
                 }
             } header: {
                 Text("Notifications")
             } footer: {
-                Text("Alerts when the item hasn't been heard from for this long. Lower is faster but more false alarms.")
+                Text(m.alertOnLeaveArea
+                     ? "Alerts only when you physically walk away from where the item last was. Best for devices like the LARQ cap that go silent for minutes at a time while sitting right next to you. Needs location set to Always."
+                     : "Alerts when the item hasn't been heard from for this long. Simple, but a device that sleeps its radio will cause false alarms.")
             }
 
             if let fix = loc.lastSeen {

@@ -20,6 +20,7 @@ final class BLEMonitor: NSObject, ObservableObject {
     private let lastSeenKey = "lastSightingDate"
     private let holdKey = "holdConnection"
     private let powerSaveOffKey = "disablePowerSaving"
+    private let leaveAreaKey = "alertOnLeaveArea"
     private let lostAlertID = "ble-lost-alert"
 
     enum LinkStatus: String {
@@ -66,9 +67,30 @@ final class BLEMonitor: NSObject, ObservableObject {
     @Published var alertsEnabled: Bool {
         didSet {
             UserDefaults.standard.set(alertsEnabled, forKey: alertsKey)
-            alertsEnabled ? rescheduleLostAlert() : cancelLostAlert()
+            if !alertsEnabled { cancelLostAlert() }
         }
     }
+
+    /// Only alert once the phone has physically left the area where the item was last heard.
+    /// This is the fix for the LARQ cap: it goes silent for many minutes even while right next
+    /// to you, so "silent for N minutes" false-alarms. "Did you walk away from it" does not.
+    @Published var alertOnLeaveArea: Bool {
+        didSet {
+            UserDefaults.standard.set(alertOnLeaveArea, forKey: leaveAreaKey)
+            cancelLostAlert()
+            if alertOnLeaveArea {
+                LocationRecorder.shared.armGeofence(radius: areaRadius)
+            } else {
+                LocationRecorder.shared.disarmGeofence()
+            }
+        }
+    }
+
+    /// Radius of "the area it's in", in metres.
+    private let areaRadius: Double = 150
+    /// After leaving the area, how long the item may stay unheard before alerting. Gives a cap
+    /// that wakes on movement a chance to show itself so we don't alert on something in your bag.
+    private let verifySeconds: TimeInterval = 30
 
     /// Hold an open connection to the item instead of only listening for advertisements.
     /// A connected peripheral usually keeps its radio awake, which stops the LARQ cap from
@@ -105,6 +127,7 @@ final class BLEMonitor: NSObject, ObservableObject {
         let t = UserDefaults.standard.double(forKey: timeoutKey)
         graceSeconds = t == 0 ? 180 : t
         alertsEnabled = UserDefaults.standard.object(forKey: alertsKey) as? Bool ?? true
+        alertOnLeaveArea = UserDefaults.standard.object(forKey: leaveAreaKey) as? Bool ?? true
         holdConnection = UserDefaults.standard.object(forKey: holdKey) as? Bool ?? false
         disablePowerSaving = UserDefaults.standard.object(forKey: powerSaveOffKey) as? Bool ?? false
         watchedName = UserDefaults.standard.string(forKey: savedNameKey)
@@ -131,6 +154,27 @@ final class BLEMonitor: NSObject, ObservableObject {
         tick = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             self?.refreshStatus()
         }
+
+        LocationRecorder.shared.onLeftArea = { [weak self] in self?.handleLeftArea() }
+        if watchedName != nil, alertOnLeaveArea {
+            LocationRecorder.shared.armGeofence(radius: areaRadius)
+        }
+    }
+
+    /// The phone left the area where the item was last heard. If we don't clearly have the item
+    /// right now, arm a short verification: alert unless it shows up within the window.
+    private func handleLeftArea() {
+        guard alertsEnabled, alertOnLeaveArea, watchedName != nil else { return }
+        let heardJustNow = isConnected
+            || (lastSighting.map { Date().timeIntervalSince($0) < 20 } ?? false)
+        if heardJustNow {
+            // It's with us, the area just moved. Re-centre and don't alert.
+            LocationRecorder.shared.recordNow()
+            LocationRecorder.shared.armGeofence(radius: areaRadius)
+            return
+        }
+        scheduleLostAlert(after: verifySeconds,
+                          body: "You seem to have left without it. Tap to see where it is.")
     }
 
     // MARK: - Public
@@ -172,6 +216,7 @@ final class BLEMonitor: NSObject, ObservableObject {
         rssi = nil
         dropConnection()
         cancelLostAlert()
+        LocationRecorder.shared.disarmGeofence()
         updateScan(force: true)
     }
 
@@ -258,8 +303,16 @@ final class BLEMonitor: NSObject, ObservableObject {
             LocationRecorder.shared.recordNow()
         }
 
-        // No pending alert while connected; otherwise defer it by the grace window.
-        if isConnected { cancelLostAlert() } else { rescheduleLostAlert() }
+        // Heard from it, so no alert is pending. In area mode, re-centre the geofence on where
+        // we are now so "the area it's in" follows the item while it's with us.
+        if alertOnLeaveArea {
+            cancelLostAlert()
+            LocationRecorder.shared.armGeofence(radius: areaRadius)
+        } else if isConnected {
+            cancelLostAlert()
+        } else {
+            rescheduleLostAlert()
+        }
         // In the background iOS reports each device once per scan; restarting the scan
         // now and then resets that, so sightings keep coming while it's in range.
         updateScan()
@@ -275,22 +328,34 @@ final class BLEMonitor: NSObject, ObservableObject {
             return
         }
         guard let seen = lastSighting else { status = .connecting; return }
-        if Date().timeIntervalSince(seen) > graceSeconds {
-            if status != .lost { status = .lost; lastLost = seen; rssi = nil }
+        let silent = Date().timeIntervalSince(seen) > graceSeconds
+        // In area mode a long silence usually just means the cap is napping nearby, so don't
+        // show LOST on a timer, the notification fires only when you actually leave the area.
+        if alertOnLeaveArea {
+            if silent, status == .connected { status = .connecting; rssi = nil }
+        } else if silent, status != .lost {
+            status = .lost; lastLost = seen; rssi = nil
         }
     }
 
     // MARK: - Alerts
 
+    /// Time-based alert (used only when "alert on leave area" is off).
     private func rescheduleLostAlert() {
+        guard !alertOnLeaveArea else { return }
+        scheduleLostAlert(after: max(graceSeconds, 30),
+                          body: "Not heard from in \(Int(graceSeconds / 60)) min. Tap to see where it was last seen.")
+    }
+
+    private func scheduleLostAlert(after: TimeInterval, body: String) {
         cancelLostAlert()
         guard alertsEnabled, watchedName != nil else { return }
         let c = UNMutableNotificationContent()
         c.title = "\(watchedName ?? "Item") left behind"
-        c.body = "Not heard from in \(Int(graceSeconds / 60)) min. Tap to see where it was last seen."
+        c.body = body
         c.sound = .defaultCritical
         c.interruptionLevel = .timeSensitive
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(graceSeconds, 30), repeats: false)
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(after, 1), repeats: false)
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: lostAlertID, content: c, trigger: trigger))
     }
@@ -325,7 +390,8 @@ extension BLEMonitor: CBCentralManagerDelegate {
         UserDefaults.standard.set(lastSighting, forKey: lastSeenKey)
         // While connected it's with us, so no left-behind alert should be pending.
         cancelLostAlert()
-        if LocationRecorder.shared.lastSeen == nil { LocationRecorder.shared.recordNow() }
+        LocationRecorder.shared.recordNow()
+        if alertOnLeaveArea { LocationRecorder.shared.armGeofence(radius: areaRadius) }
         p.discoverServices(Larq.allServices)
     }
 
@@ -339,7 +405,9 @@ extension BLEMonitor: CBCentralManagerDelegate {
         lastSighting = Date()
         UserDefaults.standard.set(lastSighting, forKey: lastSeenKey)
         LocationRecorder.shared.recordNow()
-        rescheduleLostAlert()
+        // Area mode: centre the geofence where we lost it; the exit is what alerts, not a timer.
+        if alertOnLeaveArea { LocationRecorder.shared.armGeofence(radius: areaRadius) }
+        else { rescheduleLostAlert() }
         // Keep the link if the user still wants it; iOS reconnects when the cap is back.
         if holdConnection { central.connect(p, options: nil) } else { connected = nil }
     }
