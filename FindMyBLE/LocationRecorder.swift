@@ -16,7 +16,16 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         var coordinate: CLLocationCoordinate2D { .init(latitude: lat, longitude: lon) }
     }
 
+    struct Area: Equatable {
+        let lat: Double
+        let lon: Double
+        let radius: Double
+        var coordinate: CLLocationCoordinate2D { .init(latitude: lat, longitude: lon) }
+    }
+
     @Published var lastSeen: Fix?
+    /// The live geofence, so the map can draw the ring you must cross to get an alert.
+    @Published var area: Area?
     @Published var authStatus: CLAuthorizationStatus = .notDetermined
 
     /// Called when the phone leaves the area where the item was last heard. Background-safe:
@@ -93,6 +102,7 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
 
     func disarmGeofence() {
         pendingArmRadius = nil
+        area = nil
         for r in manager.monitoredRegions where r.identifier == regionID {
             manager.stopMonitoring(for: r)
         }
@@ -103,6 +113,7 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         let clamped = min(max(radius, 50), manager.maximumRegionMonitoringDistance)
         regionCenter = center
         regionRadius = clamped
+        area = Area(lat: center.latitude, lon: center.longitude, radius: clamped)
         let region = CLCircularRegion(center: center, radius: clamped, identifier: regionID)
         region.notifyOnEntry = false
         region.notifyOnExit = true

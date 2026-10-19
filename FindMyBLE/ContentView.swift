@@ -14,12 +14,16 @@ struct ContentView: View {
     var body: some View {
         Map(position: $camera) {
             UserAnnotation()
-            if let fix = loc.lastSeen, m.watchedName != nil, m.status != .connected {
+            // The geofence you must cross before a left-behind alert fires.
+            if let a = loc.area, m.watchedName != nil {
+                MapCircle(center: a.coordinate, radius: a.radius)
+                    .foregroundStyle(.blue.opacity(0.10))
+                    .stroke(.blue.opacity(0.45), lineWidth: 1.5)
+            }
+            if let fix = loc.lastSeen, m.watchedName != nil {
                 Annotation(m.watchedName ?? "Item", coordinate: fix.coordinate, anchor: .bottom) {
                     ItemPin(status: m.status)
                 }
-                MapCircle(center: fix.coordinate, radius: max(fix.accuracy, 15))
-                    .foregroundStyle(.blue.opacity(0.12))
             }
         }
         .mapControls {
