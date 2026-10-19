@@ -258,7 +258,8 @@ final class BLEMonitor: NSObject, ObservableObject {
             LocationRecorder.shared.recordNow()
         }
 
-        rescheduleLostAlert()
+        // No pending alert while connected; otherwise defer it by the grace window.
+        if isConnected { cancelLostAlert() } else { rescheduleLostAlert() }
         // In the background iOS reports each device once per scan; restarting the scan
         // now and then resets that, so sightings keep coming while it's in range.
         updateScan()
@@ -266,6 +267,13 @@ final class BLEMonitor: NSObject, ObservableObject {
 
     private func refreshStatus() {
         guard watchedName != nil else { return }
+        // An open connection means it's with us. A connected device usually stops advertising,
+        // so there's no pending alert to keep alive, it's cancelled on connect and re-armed on
+        // disconnect. This stays correct in the background where the foreground tick can't run.
+        if isConnected {
+            if status != .connected { status = .connected; lastLost = nil }
+            return
+        }
         guard let seen = lastSighting else { status = .connecting; return }
         if Date().timeIntervalSince(seen) > graceSeconds {
             if status != .lost { status = .lost; lastLost = seen; rssi = nil }
@@ -311,6 +319,13 @@ extension BLEMonitor: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) {
         guard p.identifier == connected?.identifier else { return }
         isConnected = true
+        status = .connected
+        lastLost = nil
+        lastSighting = Date()
+        UserDefaults.standard.set(lastSighting, forKey: lastSeenKey)
+        // While connected it's with us, so no left-behind alert should be pending.
+        cancelLostAlert()
+        if LocationRecorder.shared.lastSeen == nil { LocationRecorder.shared.recordNow() }
         p.discoverServices(Larq.allServices)
     }
 
@@ -319,6 +334,12 @@ extension BLEMonitor: CBCentralManagerDelegate {
         isConnected = false
         battery = nil
         uartWriteChar = nil
+        // Just lost the link. Count grace from now, and record where we were, in case this is
+        // the moment it got left behind. Advertisements resume feeding the timer if still in range.
+        lastSighting = Date()
+        UserDefaults.standard.set(lastSighting, forKey: lastSeenKey)
+        LocationRecorder.shared.recordNow()
+        rescheduleLostAlert()
         // Keep the link if the user still wants it; iOS reconnects when the cap is back.
         if holdConnection { central.connect(p, options: nil) } else { connected = nil }
     }
