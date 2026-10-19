@@ -30,6 +30,14 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     private var pending = false
     private var pendingArmRadius: Double?
 
+    // The geofence we armed, kept so an exit can be sanity-checked against a real fix.
+    private var regionCenter: CLLocationCoordinate2D?
+    private var regionRadius: Double = 150
+    private var verifyingExit = false
+    /// How far beyond the radius, with a trustworthy fix, before we believe you actually left.
+    private let exitMargin: Double = 120
+    private let maxTrustedAccuracy: Double = 65
+
     private override init() {
         super.init()
         manager.delegate = self
@@ -93,6 +101,8 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     private func startRegion(center: CLLocationCoordinate2D, radius: Double) {
         disarmGeofence()
         let clamped = min(max(radius, 50), manager.maximumRegionMonitoringDistance)
+        regionCenter = center
+        regionRadius = clamped
         let region = CLCircularRegion(center: center, radius: clamped, identifier: regionID)
         region.notifyOnEntry = false
         region.notifyOnExit = true
@@ -126,15 +136,36 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
             pendingArmRadius = nil
             startRegion(center: loc.coordinate, radius: r)
         }
+        if verifyingExit, let loc = locs.last { resolveExit(with: loc) }
         endBG()
     }
 
     func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {
         pending = false
+        // Couldn't get a fix to confirm an exit: don't alert on a guess, just re-arm.
+        if verifyingExit { verifyingExit = false; if let c = regionCenter { startRegion(center: c, radius: regionRadius) } }
         endBG()
     }
 
     func locationManager(_ m: CLLocationManager, didExitRegion region: CLRegion) {
-        if region.identifier == regionID { onLeftArea?() }
+        guard region.identifier == regionID else { return }
+        // Don't trust the exit. Indoors the fix jumps hundreds of metres while you stand still,
+        // so confirm with a fresh high-accuracy fix before believing you actually left.
+        verifyingExit = true
+        manager.desiredAccuracy = kCLLocationAccuracyBest
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "exitCheck") { [weak self] in self?.endBG() }
+        manager.requestLocation()
+    }
+
+    private func resolveExit(with loc: CLLocation) {
+        verifyingExit = false
+        guard let center = regionCenter else { return }
+        let d = loc.distance(from: CLLocation(latitude: center.latitude, longitude: center.longitude))
+        let trustworthy = loc.horizontalAccuracy > 0 && loc.horizontalAccuracy <= maxTrustedAccuracy
+        if trustworthy && d > regionRadius + exitMargin {
+            onLeftArea?()                       // genuinely left
+        } else {
+            startRegion(center: center, radius: regionRadius)  // drift or unsure: re-arm, no alert
+        }
     }
 }
