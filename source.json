@@ -21,6 +21,15 @@
       "versions": [
         {
           "version": "1.0",
+          "buildVersion": "14",
+          "date": "2026-10-20T18:51:21Z",
+          "localizedDescription": "- CI: publish an AltStore-format source for FlareStore / AltStore / SideStore (a16ac7c)\n- Backfill script: repair mis-tagged releases [skip ci] (5720441)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.14/FindMyBLE-1.0-build-14.ipa",
+          "size": 425700,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "1.0",
           "buildVersion": "13",
           "date": "2026-10-20T18:47:41Z",
           "localizedDescription": "- Info.plist: take version and build number from MARKETING_VERSION / CURRENT_PROJECT_VERSION (8f81633)",
@@ -30,10 +39,10 @@
         }
       ],
       "version": "1.0",
-      "versionDate": "2026-10-20T18:47:41Z",
-      "versionDescription": "- Info.plist: take version and build number from MARKETING_VERSION / CURRENT_PROJECT_VERSION (8f81633)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.13/FindMyBLE-1.0-build-13.ipa",
-      "size": 425701,
+      "versionDate": "2026-10-20T18:51:21Z",
+      "versionDescription": "- CI: publish an AltStore-format source for FlareStore / AltStore / SideStore (a16ac7c)\n- Backfill script: repair mis-tagged releases [skip ci] (5720441)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.14/FindMyBLE-1.0-build-14.ipa",
+      "size": 425700,
       "appPermissions": {}
     }
   ],
