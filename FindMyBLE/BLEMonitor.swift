@@ -22,6 +22,8 @@ final class BLEMonitor: NSObject, ObservableObject {
     private let powerSaveOffKey = "disablePowerSaving"
     private let leaveAreaKey = "alertOnLeaveArea"
     private let notifyReturnsKey = "notifyReturns"
+    private let areaRadiusKey = "areaRadius"
+    private let customNameKey = "customDisplayName"
     private let lostAlertID = "ble-lost-alert"
 
     enum LinkStatus: String {
@@ -95,8 +97,31 @@ final class BLEMonitor: NSObject, ObservableObject {
         didSet { UserDefaults.standard.set(notifyReturns, forKey: notifyReturnsKey) }
     }
 
-    /// Radius of "the area it's in", in metres.
-    private let areaRadius: Double = 150
+    /// Radius of "the area it's in", in metres. Edited in the UI as a diameter.
+    @Published var areaRadius: Double {
+        didSet {
+            UserDefaults.standard.set(areaRadius, forKey: areaRadiusKey)
+            if alertOnLeaveArea, watchedName != nil {
+                LocationRecorder.shared.resizeGeofence(radius: areaRadius)
+            }
+        }
+    }
+
+    /// Name shown in the app and in alerts. Purely cosmetic: the device's real Bluetooth
+    /// name is untouched and matching still uses matchPrefix.
+    @Published var customName: String {
+        didSet { UserDefaults.standard.set(customName, forKey: customNameKey) }
+    }
+
+    /// What to call the item everywhere a human reads it. Falls back to the advertised
+    /// prefix ("LARQ_" -> "LARQ") instead of the ugly random suffix, then the raw name.
+    var displayName: String {
+        let c = customName.trimmingCharacters(in: .whitespaces)
+        if !c.isEmpty { return c }
+        let p = matchPrefix.trimmingCharacters(in: CharacterSet(charactersIn: "_- "))
+        if !p.isEmpty { return p }
+        return watchedName ?? "Item"
+    }
     /// After leaving the area, how long the item may stay unheard before alerting. Gives a cap
     /// that wakes on movement a chance to show itself so we don't alert on something in your bag.
     private let verifySeconds: TimeInterval = 30
@@ -139,6 +164,9 @@ final class BLEMonitor: NSObject, ObservableObject {
 
     private override init() {
         let t = UserDefaults.standard.double(forKey: timeoutKey)
+        let ar = UserDefaults.standard.double(forKey: areaRadiusKey)
+        areaRadius = ar == 0 ? 150 : ar
+        customName = UserDefaults.standard.string(forKey: customNameKey) ?? ""
         graceSeconds = t == 0 ? 180 : t
         alertsEnabled = UserDefaults.standard.object(forKey: alertsKey) as? Bool ?? true
         alertOnLeaveArea = UserDefaults.standard.object(forKey: leaveAreaKey) as? Bool ?? true
@@ -184,7 +212,7 @@ final class BLEMonitor: NSObject, ObservableObject {
         let withMe = isConnected || (lastSighting.map { Date().timeIntervalSince($0) < 90 } ?? false)
         if withMe { return }
         scheduleLostAlert(after: verifySeconds,
-                          body: "You left \(p.name) without \(watchedName ?? "your item"). Grab it?")
+                          body: "You left \(p.name) without \(displayName). Grab it?")
     }
 
     /// The phone left the area where the item was last heard. If we don't clearly have the item
@@ -227,6 +255,7 @@ final class BLEMonitor: NSObject, ObservableObject {
         isScanning = false
         watchedName = device.name
         matchPrefix = Self.defaultPrefix(for: device.name)
+        customName = ""
         watchedServices = device.services
         backgroundCapable = !device.services.isEmpty
         UserDefaults.standard.set(device.name, forKey: savedNameKey)
@@ -242,6 +271,7 @@ final class BLEMonitor: NSObject, ObservableObject {
         UserDefaults.standard.removeObject(forKey: savedNameKey)
         UserDefaults.standard.removeObject(forKey: savedServicesKey)
         UserDefaults.standard.removeObject(forKey: lastSeenKey)
+        customName = ""
         lastSighting = nil
         lastLost = nil
         status = .idle
@@ -354,7 +384,7 @@ final class BLEMonitor: NSObject, ObservableObject {
 
         if notifyBack, wasAway, alertsEnabled, notifyReturns {
             let c = UNMutableNotificationContent()
-            c.title = "\(watchedName ?? "Item") is back with you"
+            c.title = "\(displayName) is back with you"
             UNUserNotificationCenter.current().add(
                 UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
         }
@@ -421,7 +451,7 @@ final class BLEMonitor: NSObject, ObservableObject {
         cancelLostAlert()
         guard alertsEnabled, watchedName != nil else { return }
         let c = UNMutableNotificationContent()
-        c.title = "\(watchedName ?? "Item") left behind"
+        c.title = "\(displayName) left behind"
         c.body = body
         c.sound = .defaultCritical
         c.interruptionLevel = .timeSensitive

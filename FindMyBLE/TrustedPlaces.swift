@@ -49,6 +49,20 @@ final class TrustedPlaces: ObservableObject {
         changed()
     }
 
+    /// Geofence size for this place. Stored as a radius; the UI edits it as a diameter.
+    func setRadius(_ p: Place, _ radius: Double) {
+        guard let i = places.firstIndex(where: { $0.id == p.id }) else { return }
+        places[i].radius = radius
+        changed()
+    }
+
+    func rename(_ p: Place, _ name: String) {
+        guard let i = places.firstIndex(where: { $0.id == p.id }) else { return }
+        let n = name.trimmingCharacters(in: .whitespaces)
+        places[i].name = n.isEmpty ? "Place" : n
+        changed()
+    }
+
     /// Any place (either mode) that this coordinate falls inside. Used to suppress the generic
     /// item-left-behind alert, since trusted places have their own leave logic.
     func containing(_ coord: CLLocationCoordinate2D) -> Place? {

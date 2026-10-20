@@ -21,7 +21,7 @@ struct ContentView: View {
                     .stroke(.blue.opacity(0.45), lineWidth: 1.5)
             }
             if let fix = loc.lastSeen, m.watchedName != nil {
-                Annotation(m.watchedName ?? "Item", coordinate: fix.coordinate, anchor: .bottom) {
+                Annotation(m.displayName, coordinate: fix.coordinate, anchor: .bottom) {
                     ItemPin(status: m.status)
                 }
             }
@@ -121,11 +121,11 @@ struct ItemsTab: View {
     var body: some View {
         NavigationStack {
             List {
-                if let name = m.watchedName {
+                if m.watchedName != nil {
                     NavigationLink {
                         ItemDetail()
                     } label: {
-                        ItemRow(name: name)
+                        ItemRow(name: m.displayName)
                     }
                     .simultaneousGesture(TapGesture().onEnded { focus() })
                 } else {
@@ -241,6 +241,25 @@ struct ItemDetail: View {
             }
 
             Section {
+                LabeledContent("Name") {
+                    TextField(BLEMonitor.defaultPrefix(for: m.watchedName ?? "")
+                                .trimmingCharacters(in: CharacterSet(charactersIn: "_- ")),
+                              text: $m.customName)
+                        .multilineTextAlignment(.trailing)
+                        .submitLabel(.done)
+                }
+                if let raw = m.watchedName {
+                    LabeledContent("Bluetooth name") {
+                        Text(raw).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    }
+                }
+            } header: {
+                Text("Display")
+            } footer: {
+                Text("Only changes what FindMyBLE shows, in the app and in alerts. The device's real Bluetooth name stays the same.")
+            }
+
+            Section {
                 LabeledContent("Name starts with") {
                     TextField("LARQ_", text: $m.matchPrefix)
                         .multilineTextAlignment(.trailing)
@@ -272,6 +291,9 @@ struct ItemDetail: View {
                 Toggle("Notify When Left Behind", isOn: $m.alertsEnabled)
                 if m.alertsEnabled {
                     Toggle("Only When I Leave the Area", isOn: $m.alertOnLeaveArea)
+                    if m.alertOnLeaveArea {
+                        DiameterStepper(title: "Area size", radius: $m.areaRadius)
+                    }
                     Toggle("Notify When Back", isOn: $m.notifyReturns)
                     if !m.alertOnLeaveArea {
                         Stepper("Alert after \(Int(m.graceSeconds / 60)) min", value: $m.graceSeconds, in: 60...1800, step: 60)
@@ -299,7 +321,7 @@ struct ItemDetail: View {
                 Button("Remove This Item", role: .destructive) { confirmRemove = true }
             }
         }
-        .navigationTitle(m.watchedName ?? "Item")
+        .navigationTitle(m.displayName)
         .task(id: loc.lastSeen) { await geocode() }
         .sheet(isPresented: $showNearby) { FindNearbyView() }
         .confirmationDialog("Stop tracking this item?", isPresented: $confirmRemove, titleVisibility: .visible) {
@@ -318,7 +340,7 @@ struct ItemDetail: View {
     private func openInMaps() {
         guard let fix = loc.lastSeen else { return }
         let item = MKMapItem(placemark: MKPlacemark(coordinate: fix.coordinate))
-        item.name = "\(m.watchedName ?? "Item") last seen"
+        item.name = "\(m.displayName) last seen"
         item.openInMaps(launchOptions: [MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking])
     }
 }
@@ -368,7 +390,7 @@ struct FindNearbyView: View {
                            startPoint: .top, endPoint: .bottom).ignoresSafeArea()
             VStack(spacing: 30) {
                 HStack {
-                    Text(m.watchedName ?? "Item").font(.headline)
+                    Text(m.displayName).font(.headline)
                     Spacer()
                     Button { dismiss() } label: { Image(systemName: "xmark.circle.fill").font(.title2) }
                 }
@@ -505,6 +527,8 @@ struct MeTab: View {
     @ObservedObject var places = TrustedPlaces.shared
     @State private var showAddPlace = false
     @State private var newName = ""
+    @State private var renaming: Place?
+    @State private var renameText = ""
 
     var body: some View {
         NavigationStack {
@@ -531,8 +555,12 @@ struct MeTab: View {
                                 Image(systemName: "mappin.circle.fill").foregroundStyle(.tint)
                                 Text(p.name)
                                 Spacer()
-                                Text("\(Int(p.radius)) m").foregroundStyle(.secondary).font(.footnote)
+                                Text(DiameterStepper.format(p.radius * 2)).foregroundStyle(.secondary).font(.footnote)
                             }
+                            DiameterStepper(title: "Size", radius: Binding(
+                                get: { p.radius },
+                                set: { places.setRadius(p, $0) }))
+                                .font(.subheadline)
                             Picker("", selection: Binding(
                                 get: { p.mode },
                                 set: { places.setMode(p, $0) })) {
@@ -540,6 +568,12 @@ struct MeTab: View {
                                 Text("Ignore").tag(PlaceMode.ignore)
                             }
                             .pickerStyle(.segmented)
+                        }
+                        .contextMenu {
+                            Button("Rename", systemImage: "pencil") {
+                                renameText = p.name
+                                renaming = p
+                            }
                         }
                     }
                     .onDelete { idx in idx.map { places.places[$0] }.forEach(places.remove) }
@@ -571,6 +605,16 @@ struct MeTab: View {
             } message: {
                 Text("Saves where you are now as a trusted spot.")
             }
+            .alert("Rename place", isPresented: Binding(
+                get: { renaming != nil },
+                set: { if !$0 { renaming = nil } })) {
+                TextField("Name", text: $renameText)
+                Button("Cancel", role: .cancel) { renaming = nil }
+                Button("Save") {
+                    if let p = renaming { places.rename(p, renameText) }
+                    renaming = nil
+                }
+            }
         }
     }
 
@@ -581,6 +625,35 @@ struct MeTab: View {
         case .denied, .restricted: return "Denied"
         default: return "Not Set"
         }
+    }
+}
+
+// MARK: Geofence size
+
+/// Edits a geofence as a diameter (what you'd pace out) while the model keeps a radius.
+/// iOS won't monitor regions under ~100 m across, so that's the floor.
+struct DiameterStepper: View {
+    let title: String
+    @Binding var radius: Double
+
+    static let range: ClosedRange<Double> = 100...3000
+
+    var body: some View {
+        Stepper(value: Binding(
+            get: { radius * 2 },
+            set: { radius = min(max($0, Self.range.lowerBound), Self.range.upperBound) / 2 }),
+                in: Self.range, step: step) {
+            LabeledContent(title) { Text(Self.format(radius * 2)) }
+        }
+    }
+
+    /// Fine steps when small, coarse when big, so you're not tapping forever.
+    private var step: Double { radius * 2 < 500 ? 50 : radius * 2 < 1000 ? 100 : 250 }
+
+    static func format(_ diameter: Double) -> String {
+        diameter >= 1000
+            ? String(format: "%.1f km across", diameter / 1000).replacingOccurrences(of: ".0 ", with: " ")
+            : "\(Int(diameter)) m across"
     }
 }
 

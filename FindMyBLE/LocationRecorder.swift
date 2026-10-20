@@ -110,6 +110,16 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         }
     }
 
+    /// Change the size of the live geofence without moving it. If nothing is armed yet,
+    /// arm one here at the new size.
+    func resizeGeofence(radius: Double) {
+        if let c = regionCenter, area != nil {
+            startRegion(center: c, radius: radius)
+        } else {
+            armGeofence(radius: radius)
+        }
+    }
+
     func disarmGeofence() {
         pendingArmRadius = nil
         area = nil
