@@ -21,6 +21,15 @@
       "versions": [
         {
           "version": "1.0",
+          "buildVersion": "16",
+          "date": "2026-10-20T19:10:41Z",
+          "localizedDescription": "- Trusted places get a mode: remind if you leave without the item (528186b)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.16/FindMyBLE-1.0-build-16.ipa",
+          "size": 455572,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "1.0",
           "buildVersion": "15",
           "date": "2026-10-20T19:03:34Z",
           "localizedDescription": "- Trusted locations, mute return alerts, build number + changelog in releases (fd549b3)",
@@ -48,10 +57,10 @@
         }
       ],
       "version": "1.0",
-      "versionDate": "2026-10-20T19:03:34Z",
-      "versionDescription": "- Trusted locations, mute return alerts, build number + changelog in releases (fd549b3)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.15/FindMyBLE-1.0-build-15.ipa",
-      "size": 443184,
+      "versionDate": "2026-10-20T19:10:41Z",
+      "versionDescription": "- Trusted places get a mode: remind if you leave without the item (528186b)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.16/FindMyBLE-1.0-build-16.ipa",
+      "size": 455572,
       "appPermissions": {}
     }
   ],
