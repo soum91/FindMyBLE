@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.20",
+          "buildVersion": "20",
+          "date": "2026-10-20T20:41:38Z",
+          "localizedDescription": "- Geofence and trusted places down to 10 m, metres/feet setting (ed3e473)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.20/FindMyBLE-1.0-build-20.ipa",
+          "size": 556975,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.19",
           "buildVersion": "19",
           "date": "2026-10-20T20:29:22Z",
@@ -83,11 +92,11 @@
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.19",
-      "versionDate": "2026-10-20T20:29:22Z",
-      "versionDescription": "- Multiple items, per-item geofence slider and map rings, LARQ back in Add Item (afd08dd)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.19/FindMyBLE-1.0-build-19.ipa",
-      "size": 550366,
+      "version": "1.0.20",
+      "versionDate": "2026-10-20T20:41:38Z",
+      "versionDescription": "- Geofence and trusted places down to 10 m, metres/feet setting (ed3e473)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.20/FindMyBLE-1.0-build-20.ipa",
+      "size": 556975,
       "appPermissions": {}
     }
   ],
