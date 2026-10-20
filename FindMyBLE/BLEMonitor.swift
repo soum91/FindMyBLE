@@ -1,190 +1,69 @@
 import Foundation
 import CoreBluetooth
 import UserNotifications
-import Combine
+import UIKit
+import SwiftUI
 
-/// Presence-based tracker. Instead of holding a connection (which cheap gadgets like the
-/// LARQ cap drop to save battery, then come back under a new random address), it listens
-/// for the item's advertisements by name. Every sighting pushes the "left behind" alert
-/// further into the future. If the item goes quiet for longer than the away timeout,
-/// the alert fires, even with the app suspended, because the notification system owns the timer.
+/// Presence-based tracker for any number of items. Instead of holding a connection (which cheap
+/// gadgets like the LARQ cap drop to save battery, then come back under a new random address),
+/// it listens for each item's advertisements by name prefix. Each sighting pushes that item's
+/// "left behind" alert into the future, or re-centres its geofence in leave-area mode.
 final class BLEMonitor: NSObject, ObservableObject {
     static let shared = BLEMonitor()
-
     static let restoreID = "com.soumen.findmyble.central"
-    private let savedNameKey = "watchedPeripheralName"
-    private let savedServicesKey = "watchedServiceUUIDs"
-    private let matchKey = "matchPrefix"
-    private let timeoutKey = "awayTimeout"
-    private let alertsKey = "alertsEnabled"
-    private let lastSeenKey = "lastSightingDate"
-    private let holdKey = "holdConnection"
-    private let powerSaveOffKey = "disablePowerSaving"
-    private let leaveAreaKey = "alertOnLeaveArea"
-    private let notifyReturnsKey = "notifyReturns"
-    private let areaRadiusKey = "areaRadius"
-    private let customNameKey = "customDisplayName"
-    private let lostAlertID = "ble-lost-alert"
 
-    enum LinkStatus: String {
-        case idle = "Not watching"
-        case connecting = "Searching..."
-        case connected = "With You"
-        case lost = "LOST"
-    }
+    private let itemsKey = "trackedItems.v2"
+    private let sightingsKey = "lastSightings.v2"
+    private let heldKey = "heldPeripherals.v2"
+    private let legacyAlertID = "ble-lost-alert"
 
     struct Device: Identifiable {
         let id: UUID
         let name: String
         var rssi: Int
         var services: [CBUUID]
+        /// Already connected to this phone (by us or another app), so it isn't advertising.
+        var connected = false
     }
 
     @Published var btState: CBManagerState = .unknown
     @Published var devices: [Device] = []
     @Published var isScanning = false
-    @Published var status: LinkStatus = .idle
-    @Published var watchedName: String?
-    @Published var rssi: Int?
-    /// When the current rssi reading arrived, so the finder can tell live from stale.
-    @Published var rssiAt: Date?
-    /// When the item was last heard from, i.e. when it went missing once status is .lost.
-    @Published var lastLost: Date?
-    @Published var lastSighting: Date?
-    /// False when the item advertises no service UUID. iOS only lets apps scan for those
-    /// in the background, so such an item is tracked only while the app is open.
-    @Published var backgroundCapable = true
+    @Published private(set) var items: [TrackedItem] = []
+    @Published private(set) var live: [UUID: ItemLive] = [:]
 
-    /// Any advertised name starting with this counts as the item. Devices like the LARQ cap
-    /// rotate the random part of their name ("LARQ_xxxx"), so exact matching would lose it.
-    @Published var matchPrefix: String {
-        didSet { UserDefaults.standard.set(matchPrefix, forKey: matchKey) }
-    }
+    private var central: CBCentralManager!
+    private var lastScanRestart = Date.distantPast
+    private var tick: Timer?
+    private var connectedPoll: Timer?
+    private var appActive = true
 
-    /// Seconds without a sighting before it counts as left behind.
-    @Published var graceSeconds: Double {
-        didSet {
-            UserDefaults.standard.set(graceSeconds, forKey: timeoutKey)
-            if lastSighting != nil { rescheduleLostAlert() }
-        }
-    }
+    /// Peripheral each item holds (or is connecting to). Retained so iOS keeps the link.
+    private var held: [UUID: CBPeripheral] = [:]
+    /// Last peripheral that matched each item, so the finder can connect on demand.
+    private var lastPeripheral: [UUID: CBPeripheral] = [:]
+    private var uartWrite: [UUID: CBCharacteristic] = [:]
+    /// Item whose Find Nearby screen is open: connect and poll signal fast, then let go.
+    private var finding: UUID?
+    private var rssiPoll: Timer?
 
-    @Published var alertsEnabled: Bool {
-        didSet {
-            UserDefaults.standard.set(alertsEnabled, forKey: alertsKey)
-            if !alertsEnabled { cancelLostAlert() }
-        }
-    }
+    // Throttles, so a chatty advertiser doesn't hammer region monitoring and notifications.
+    private var lastAreaArm: [UUID: Date] = [:]
+    private var lastTimerArm: [UUID: Date] = [:]
+    private var lastPersist = Date.distantPast
+    private var pendingResize: [UUID: DispatchWorkItem] = [:]
 
-    /// Only alert once the phone has physically left the area where the item was last heard.
-    /// This is the fix for the LARQ cap: it goes silent for many minutes even while right next
-    /// to you, so "silent for N minutes" false-alarms. "Did you walk away from it" does not.
-    @Published var alertOnLeaveArea: Bool {
-        didSet {
-            UserDefaults.standard.set(alertOnLeaveArea, forKey: leaveAreaKey)
-            cancelLostAlert()
-            if alertOnLeaveArea {
-                LocationRecorder.shared.armGeofence(radius: areaRadius)
-            } else {
-                LocationRecorder.shared.disarmGeofence()
-            }
-        }
-    }
-
-    /// Notify when the item comes back after being away. Off by default: on a napping cap this
-    /// fires constantly and is pure noise.
-    @Published var notifyReturns: Bool {
-        didSet { UserDefaults.standard.set(notifyReturns, forKey: notifyReturnsKey) }
-    }
-
-    /// Radius of "the area it's in", in metres. Edited in the UI as a diameter.
-    @Published var areaRadius: Double {
-        didSet {
-            UserDefaults.standard.set(areaRadius, forKey: areaRadiusKey)
-            if alertOnLeaveArea, watchedName != nil {
-                LocationRecorder.shared.resizeGeofence(radius: areaRadius)
-            }
-        }
-    }
-
-    /// Name shown in the app and in alerts. Purely cosmetic: the device's real Bluetooth
-    /// name is untouched and matching still uses matchPrefix.
-    @Published var customName: String {
-        didSet { UserDefaults.standard.set(customName, forKey: customNameKey) }
-    }
-
-    /// What to call the item everywhere a human reads it. Falls back to the advertised
-    /// prefix ("LARQ_" -> "LARQ") instead of the ugly random suffix, then the raw name.
-    var displayName: String {
-        let c = customName.trimmingCharacters(in: .whitespaces)
-        if !c.isEmpty { return c }
-        let p = matchPrefix.trimmingCharacters(in: CharacterSet(charactersIn: "_- "))
-        if !p.isEmpty { return p }
-        return watchedName ?? "Item"
-    }
-    /// After leaving the area, how long the item may stay unheard before alerting. Gives a cap
+    /// After leaving an area, how long the item may stay unheard before alerting. Gives a cap
     /// that wakes on movement a chance to show itself so we don't alert on something in your bag.
     private let verifySeconds: TimeInterval = 30
 
-    /// Hold an open connection to the item instead of only listening for advertisements.
-    /// A connected peripheral usually keeps its radio awake, which stops the LARQ cap from
-    /// dropping off. Presence tracking keeps running underneath, so left-behind still works.
-    @Published var holdConnection: Bool {
-        didSet {
-            UserDefaults.standard.set(holdConnection, forKey: holdKey)
-            if holdConnection { updateScan(force: true) } else { dropConnection() }
-        }
-    }
-
-    /// When connected, tell the cap to turn its power-saving mode off (LARQ only, harmless).
-    @Published var disablePowerSaving: Bool {
-        didSet {
-            UserDefaults.standard.set(disablePowerSaving, forKey: powerSaveOffKey)
-            if disablePowerSaving, connected?.state == .connected { sendPowerSavingOff() }
-        }
-    }
-
-    /// Battery level read over the standard service while connected. Nil when not connected.
-    @Published var battery: Int?
-    @Published var isConnected = false
-
-    private var central: CBCentralManager!
-    private var watchedServices: [CBUUID] = []
-    private var lastScanRestart = Date.distantPast
-    private var tick: Timer?
-
-    /// The peripheral we currently hold or are connecting to. Retained so iOS keeps the link.
-    private var connected: CBPeripheral?
-    private var uartWriteChar: CBCharacteristic?
-    /// Last peripheral that matched our item, so the finder can connect on demand.
-    private var lastSeenPeripheral: CBPeripheral?
-    /// True while the Find Nearby screen is open: connect and poll signal fast, then let go.
-    private var finding = false
-    private var rssiPoll: Timer?
-
     private override init() {
-        let t = UserDefaults.standard.double(forKey: timeoutKey)
-        let ar = UserDefaults.standard.double(forKey: areaRadiusKey)
-        areaRadius = ar == 0 ? 150 : ar
-        customName = UserDefaults.standard.string(forKey: customNameKey) ?? ""
-        graceSeconds = t == 0 ? 180 : t
-        alertsEnabled = UserDefaults.standard.object(forKey: alertsKey) as? Bool ?? true
-        alertOnLeaveArea = UserDefaults.standard.object(forKey: leaveAreaKey) as? Bool ?? true
-        notifyReturns = UserDefaults.standard.object(forKey: notifyReturnsKey) as? Bool ?? false
-        holdConnection = UserDefaults.standard.object(forKey: holdKey) as? Bool ?? false
-        disablePowerSaving = UserDefaults.standard.object(forKey: powerSaveOffKey) as? Bool ?? false
-        watchedName = UserDefaults.standard.string(forKey: savedNameKey)
-        matchPrefix = UserDefaults.standard.string(forKey: matchKey)
-            ?? UserDefaults.standard.string(forKey: savedNameKey).map { BLEMonitor.defaultPrefix(for: $0) } ?? ""
-        watchedServices = (UserDefaults.standard.stringArray(forKey: savedServicesKey) ?? []).map(CBUUID.init(string:))
-        lastSighting = UserDefaults.standard.object(forKey: lastSeenKey) as? Date
         super.init()
-
-        backgroundCapable = watchedServices.isEmpty == false
-        status = watchedName == nil ? .idle : .connecting
+        loadItems()
 
         UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [legacyAlertID])
 
         central = CBCentralManager(
             delegate: self,
@@ -195,139 +74,183 @@ final class BLEMonitor: NSObject, ObservableObject {
 
         // Foreground-only clock so the UI flips to "Left Behind" on time.
         tick = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            self?.refreshStatus()
+            self?.refreshAll()
         }
 
-        LocationRecorder.shared.onLeftArea = { [weak self] in self?.handleLeftArea() }
-        LocationRecorder.shared.onLeftPlace = { [weak self] p in self?.handleLeftPlace(p) }
-        if watchedName != nil, alertOnLeaveArea {
-            LocationRecorder.shared.armGeofence(radius: areaRadius)
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.appActive = true
+            self?.updateScan(force: true)
         }
-        LocationRecorder.shared.syncPlaceRegions(TrustedPlaces.shared.places)
+        nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.appActive = false
+            self?.persistSightings()
+            self?.updateScan(force: true)
+        }
+
+        let loc = LocationRecorder.shared
+        loc.onLeftArea = { [weak self] id in self?.handleLeftArea(id) }
+        loc.onLeftPlace = { [weak self] p in self?.handleLeftPlace(p) }
+        loc.pruneGeofences(keeping: Set(items.map(\.id)))
+        for it in items where it.alertOnLeaveArea && loc.area[it.id] == nil {
+            loc.armGeofence(for: it.id, radius: it.areaRadius)
+        }
+        loc.syncPlaceRegions(TrustedPlaces.shared.places)
     }
 
-    /// Left a trusted place set to "remind". If the item didn't come with you, nudge you to grab it.
-    private func handleLeftPlace(_ p: Place) {
-        guard alertsEnabled, p.mode == .remind, watchedName != nil else { return }
-        let withMe = isConnected || (lastSighting.map { Date().timeIntervalSince($0) < 90 } ?? false)
-        if withMe { return }
-        scheduleLostAlert(after: verifySeconds,
-                          body: "You left \(p.name) without \(displayName). Grab it?")
+    // MARK: - Items
+
+    func item(_ id: UUID) -> TrackedItem? { items.first { $0.id == id } }
+    func state(_ id: UUID) -> ItemLive { live[id] ?? ItemLive() }
+
+    /// Change an item's settings and apply whatever that change needs (geofence, alerts, link).
+    func update(_ id: UUID, _ change: (inout TrackedItem) -> Void) {
+        guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+        let old = items[i]
+        var new = old
+        change(&new)
+        new.areaRadius = min(max(new.areaRadius, TrackedItem.radiusRange.lowerBound), TrackedItem.radiusRange.upperBound)
+        guard new != old else { return }
+        items[i] = new
+        saveItems()
+
+        if !new.alertsEnabled { cancelLostAlert(id) }
+        if new.alertOnLeaveArea != old.alertOnLeaveArea {
+            cancelLostAlert(id)
+            if new.alertOnLeaveArea {
+                LocationRecorder.shared.armGeofence(for: id, radius: new.areaRadius)
+            } else {
+                LocationRecorder.shared.disarmGeofence(for: id)
+                if state(id).lastSighting != nil { rescheduleLostAlert(id, force: true) }
+            }
+        }
+        if new.areaRadius != old.areaRadius, new.alertOnLeaveArea {
+            // The slider fires continuously; resize the real region once it settles.
+            pendingResize[id]?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, let it = self.item(id) else { return }
+                LocationRecorder.shared.resizeGeofence(for: id, radius: it.areaRadius)
+            }
+            pendingResize[id] = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
+        }
+        if new.graceSeconds != old.graceSeconds, !new.alertOnLeaveArea, state(id).lastSighting != nil {
+            rescheduleLostAlert(id, force: true)
+        }
+        if new.holdConnection != old.holdConnection {
+            if new.holdConnection {
+                if let p = lastPeripheral[id] { connectIfNeeded(id, p) }
+                updateScan(force: true)
+            } else if finding != id {
+                dropConnection(id)
+            }
+        }
+        if new.disablePowerSaving, !old.disablePowerSaving, held[id]?.state == .connected {
+            sendPowerSavingOff(id)
+        }
+        if new.matchPrefix != old.matchPrefix || new.services != old.services { updateScan(force: true) }
     }
 
-    /// The phone left the area where the item was last heard. If we don't clearly have the item
-    /// right now, arm a short verification: alert unless it shows up within the window.
-    private func handleLeftArea() {
-        guard alertsEnabled, alertOnLeaveArea, watchedName != nil else { return }
-        // Item is sitting in a trusted place? The place's own leave logic owns it, so the generic
-        // item-geofence stays quiet to avoid double alerts (and to honour "ignore" places).
-        if let where_ = LocationRecorder.shared.area?.coordinate ?? LocationRecorder.shared.lastSeen?.coordinate,
-           TrustedPlaces.shared.containing(where_) != nil {
-            return
-        }
-        let heardJustNow = isConnected
-            || (lastSighting.map { Date().timeIntervalSince($0) < 20 } ?? false)
-        if heardJustNow {
-            // It's with us, the area just moved. Re-centre and don't alert.
-            LocationRecorder.shared.recordNow()
-            LocationRecorder.shared.armGeofence(radius: areaRadius)
-            return
-        }
-        scheduleLostAlert(after: verifySeconds,
-                          body: "You seem to have left without it. Tap to see where it is.")
+    func binding<T>(_ id: UUID, _ kp: WritableKeyPath<TrackedItem, T>, default d: T) -> Binding<T> {
+        Binding(get: { [weak self] in self?.item(id)?[keyPath: kp] ?? d },
+                set: { [weak self] v in self?.update(id) { $0[keyPath: kp] = v } })
     }
 
-    // MARK: - Public
+    /// Track a device from the Add Item list. Returns the new item's id.
+    @discardableResult
+    func add(_ d: Device) -> UUID {
+        let used = Set(items.map(\.colorIndex))
+        let color = (0..<ItemPalette.colors.count).first { !used.contains($0) } ?? items.count
+        let it = TrackedItem(bluetoothName: d.name,
+                             matchPrefix: Self.defaultPrefix(for: d.name),
+                             services: d.services.map(\.uuidString),
+                             colorIndex: color)
+        items.append(it)
+        live[it.id] = ItemLive()
+        saveItems()
+        if !d.connected { sighted(it.id, rssi: d.rssi, notifyBack: false) }
+        else { live[it.id]?.lastSighting = Date(); LocationRecorder.shared.recordNow(for: it.id) }
+        if it.alertOnLeaveArea { LocationRecorder.shared.armGeofence(for: it.id, radius: it.areaRadius) }
+        updateScan(force: true)
+        return it.id
+    }
 
-    /// Scan for the Add Item list.
+    func remove(_ id: UUID) {
+        dropConnection(id)
+        cancelLostAlert(id)
+        pendingResize[id]?.cancel()
+        LocationRecorder.shared.forget(id)
+        items.removeAll { $0.id == id }
+        live[id] = nil
+        lastPeripheral[id] = nil
+        lastAreaArm[id] = nil
+        lastTimerArm[id] = nil
+        saveItems()
+        persistSightings()
+        updateScan(force: true)
+    }
+
+    // MARK: - Add Item scan
+
     func startScan() {
         devices.removeAll()
         isScanning = true
         updateScan(force: true)
+        pollConnected()
+        connectedPoll?.invalidate()
+        connectedPoll = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            self?.pollConnected()
+        }
     }
 
     func stopScan() {
         isScanning = false
+        connectedPoll?.invalidate()
+        connectedPoll = nil
         updateScan(force: true)
     }
 
-    func watch(_ device: Device) {
-        isScanning = false
-        watchedName = device.name
-        matchPrefix = Self.defaultPrefix(for: device.name)
-        customName = ""
-        watchedServices = device.services
-        backgroundCapable = !device.services.isEmpty
-        UserDefaults.standard.set(device.name, forKey: savedNameKey)
-        UserDefaults.standard.set(device.services.map(\.uuidString), forKey: savedServicesKey)
-        lastLost = nil
-        sighted(rssi: device.rssi, notifyBack: false)
-        updateScan(force: true)
+    /// A connected peripheral stops advertising, so a scan alone never shows it. This is why a
+    /// LARQ cap held open (by Keep Connected, Find Nearby, or the LARQ app) vanished from Add Item.
+    /// Ask iOS for anything already connected that speaks the LARQ or a tracked item's services.
+    private func pollConnected() {
+        guard isScanning, central.state == .poweredOn else { return }
+        let svc = Array(Set(Larq.allServices + items.flatMap(\.serviceUUIDs)))
+        for p in central.retrieveConnectedPeripherals(withServices: svc) {
+            guard let name = p.name, !name.isEmpty else { continue }
+            if let i = devices.firstIndex(where: { $0.name == name }) {
+                devices[i].connected = true
+            } else {
+                devices.append(Device(id: p.identifier, name: name, rssi: -127,
+                                      services: [], connected: true))
+            }
+        }
     }
 
-    func unwatch() {
-        watchedName = nil
-        watchedServices = []
-        UserDefaults.standard.removeObject(forKey: savedNameKey)
-        UserDefaults.standard.removeObject(forKey: savedServicesKey)
-        UserDefaults.standard.removeObject(forKey: lastSeenKey)
-        customName = ""
-        lastSighting = nil
-        lastLost = nil
-        status = .idle
-        rssi = nil
-        dropConnection()
-        cancelLostAlert()
-        LocationRecorder.shared.disarmGeofence()
-        updateScan(force: true)
-    }
-
-    // MARK: - Connection hold (optional)
-
-    private func connectIfNeeded(_ p: CBPeripheral) {
-        guard holdConnection else { return }
-        guard connected?.identifier != p.identifier || p.state == .disconnected else { return }
-        connected = p
-        p.delegate = self
-        central.connect(p, options: nil)
-    }
-
-    private func dropConnection() {
-        battery = nil
-        isConnected = false
-        uartWriteChar = nil
-        stopRssiPoll()
-        if let p = connected { central.cancelPeripheralConnection(p) }
-        connected = nil
-    }
+    // MARK: - Finder
 
     /// Find Nearby opened: grab a live connection (even if Keep Connected is off) and poll signal
     /// fast, because connection RSSI updates steadily while advertisements barely trickle in.
-    func beginFinding() {
-        finding = true
-        if let p = connected ?? lastSeenPeripheral {
-            connected = p
-            p.delegate = self
+    func beginFinding(_ id: UUID) {
+        finding = id
+        if let p = held[id] ?? lastPeripheral[id] {
+            bind(id, p)
             if p.state != .connected { central.connect(p, options: nil) }
             startRssiPoll()
         }
     }
 
-    func endFinding() {
-        finding = false
+    func endFinding(_ id: UUID) {
+        guard finding == id else { return }
+        finding = nil
         stopRssiPoll()
-        // Drop the finder's temporary connection unless the user asked to hold it.
-        if !holdConnection, let p = connected, p.state == .connected || p.state == .connecting {
-            central.cancelPeripheralConnection(p)
-            connected = nil
-            isConnected = false
-        }
+        if item(id)?.holdConnection != true { dropConnection(id) }
     }
 
     private func startRssiPoll() {
         stopRssiPoll()
         rssiPoll = Timer.scheduledTimer(withTimeInterval: 1.2, repeats: true) { [weak self] _ in
-            guard let self, let p = self.connected, p.state == .connected else { return }
+            guard let self, let id = self.finding, let p = self.held[id], p.state == .connected else { return }
             p.readRSSI()
         }
     }
@@ -337,10 +260,42 @@ final class BLEMonitor: NSObject, ObservableObject {
         rssiPoll = nil
     }
 
-    private func sendPowerSavingOff() {
-        guard disablePowerSaving, let p = connected, let ch = uartWriteChar else { return }
-        let type: CBCharacteristicWriteType =
-            ch.properties.contains(.write) ? .withResponse : .withoutResponse
+    // MARK: - Connections
+
+    private func bind(_ id: UUID, _ p: CBPeripheral) {
+        held[id] = p
+        p.delegate = self
+        saveHeld()
+    }
+
+    private func connectIfNeeded(_ id: UUID, _ p: CBPeripheral) {
+        guard item(id)?.holdConnection == true else { return }
+        // While Add Item is open, don't grab a new link: a connected cap stops advertising.
+        guard !isScanning else { return }
+        if let h = held[id], h.identifier == p.identifier, h.state != .disconnected { return }
+        // Already held for a different item (two items matching one device): leave it.
+        if held.contains(where: { $0.key != id && $0.value.identifier == p.identifier }) { return }
+        bind(id, p)
+        central.connect(p, options: nil)
+    }
+
+    private func dropConnection(_ id: UUID) {
+        live[id]?.battery = nil
+        live[id]?.isConnected = false
+        uartWrite[id] = nil
+        if finding == id { stopRssiPoll() }
+        if let p = held[id] { central.cancelPeripheralConnection(p) }
+        held[id] = nil
+        saveHeld()
+    }
+
+    private func itemID(for p: CBPeripheral) -> UUID? {
+        held.first { $0.value.identifier == p.identifier }?.key
+    }
+
+    private func sendPowerSavingOff(_ id: UUID) {
+        guard item(id)?.disablePowerSaving == true, let p = held[id], let ch = uartWrite[id] else { return }
+        let type: CBCharacteristicWriteType = ch.properties.contains(.write) ? .withResponse : .withoutResponse
         p.writeValue(Larq.powerSavingOff(), for: ch, type: type)
     }
 
@@ -354,114 +309,228 @@ final class BLEMonitor: NSObject, ObservableObject {
         return name
     }
 
-    private func matches(_ name: String) -> Bool {
-        let p = matchPrefix.trimmingCharacters(in: .whitespaces)
-        guard !p.isEmpty else { return false }
-        return name.range(of: p, options: [.caseInsensitive, .anchored]) != nil
+    /// Items an advertisement belongs to. If this exact peripheral is already tied to one of the
+    /// matching items, it's that one; otherwise every item whose prefix matches counts it.
+    private func owners(of name: String, _ p: CBPeripheral) -> [UUID] {
+        let c = items.filter { $0.matches(name) }
+        if c.count > 1,
+           let bound = c.first(where: { held[$0.id]?.identifier == p.identifier
+                                        || lastPeripheral[$0.id]?.identifier == p.identifier }) {
+            return [bound.id]
+        }
+        return c.map(\.id)
     }
 
     // MARK: - Scanning
 
     private func updateScan(force: Bool = false) {
         guard central.state == .poweredOn else { return }
-        let wantWatch = watchedName != nil
-        guard isScanning || wantWatch else { central.stopScan(); return }
+        guard isScanning || !items.isEmpty else { central.stopScan(); return }
         guard force || Date().timeIntervalSince(lastScanRestart) > 20 else { return }
 
-        // Add-item scanning happens on screen, so no filter. Watching uses the item's
-        // service UUIDs when it has them, which is what makes background scanning work.
-        let services: [CBUUID]? = isScanning || watchedServices.isEmpty ? nil : watchedServices
+        // Add Item, or an item that advertises no service, needs an open scan (foreground only).
+        // Otherwise scan for the items' service UUIDs, which is what works in the background.
+        let union = Array(Set(items.flatMap(\.serviceUUIDs)))
+        let open = isScanning || union.isEmpty || (appActive && items.contains { !$0.backgroundCapable })
         central.stopScan()
-        central.scanForPeripherals(withServices: services,
+        central.scanForPeripherals(withServices: open ? nil : union,
                                    options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
         lastScanRestart = Date()
     }
 
-    /// The item was heard from.
-    private func sighted(rssi r: Int, notifyBack: Bool = true) {
+    /// An item was heard from.
+    private func sighted(_ id: UUID, rssi r: Int, notifyBack: Bool = true) {
+        guard let it = item(id) else { return }
         let now = Date()
-        let wasAway = lastSighting.map { now.timeIntervalSince($0) > graceSeconds } ?? false
+        var s = state(id)
+        let wasAway = s.lastSighting.map { now.timeIntervalSince($0) > it.graceSeconds } ?? false
 
-        if notifyBack, wasAway, alertsEnabled, notifyReturns {
+        if notifyBack, wasAway, it.alertsEnabled, it.notifyReturns {
             let c = UNMutableNotificationContent()
-            c.title = "\(displayName) is back with you"
+            c.title = "\(it.title) is back with you"
             UNUserNotificationCenter.current().add(
                 UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
         }
 
-        lastSighting = now
-        UserDefaults.standard.set(now, forKey: lastSeenKey)
-        rssi = r
-        rssiAt = now
-        status = .connected
-        lastLost = nil
+        s.lastSighting = now
+        s.rssi = r
+        s.rssiAt = now
+        s.status = .connected
+        s.lastLost = nil
+        if live[id] != s { live[id] = s }
+        if now.timeIntervalSince(lastPersist) > 15 { persistSightings() }
 
         // "Where you left it" is wherever the phone was at the last sighting.
-        if let fix = LocationRecorder.shared.lastSeen?.date, now.timeIntervalSince(fix) < 90 {
+        let loc = LocationRecorder.shared
+        if let fix = loc.lastSeen[id]?.date, now.timeIntervalSince(fix) < 90 {
             // fresh enough
         } else {
-            LocationRecorder.shared.recordNow()
+            loc.recordNow(for: id)
         }
 
-        // Heard from it, so no alert is pending. In area mode, re-centre the geofence on where
-        // we are now so "the area it's in" follows the item while it's with us.
-        if alertOnLeaveArea {
-            cancelLostAlert()
-            LocationRecorder.shared.armGeofence(radius: areaRadius)
-        } else if isConnected {
-            cancelLostAlert()
+        if it.alertOnLeaveArea {
+            // Heard from it, so no alert is pending. Re-centre its ring on where we are now so
+            // "the area it's in" follows it while it's with us (at most once a minute).
+            cancelLostAlert(id)
+            if loc.area[id] == nil || now.timeIntervalSince(lastAreaArm[id] ?? .distantPast) > 60 {
+                lastAreaArm[id] = now
+                loc.armGeofence(for: id, radius: it.areaRadius)
+            }
+        } else if s.isConnected {
+            cancelLostAlert(id)
         } else {
-            rescheduleLostAlert()
+            rescheduleLostAlert(id)
         }
-        // In the background iOS reports each device once per scan; restarting the scan
-        // now and then resets that, so sightings keep coming while it's in range.
+        // In the background iOS reports each device once per scan; restarting now and then
+        // resets that, so sightings keep coming while it's in range.
         updateScan()
     }
 
-    private func refreshStatus() {
-        guard watchedName != nil else { return }
-        // An open connection means it's with us. A connected device usually stops advertising,
-        // so there's no pending alert to keep alive, it's cancelled on connect and re-armed on
-        // disconnect. This stays correct in the background where the foreground tick can't run.
-        if isConnected {
-            if status != .connected { status = .connected; lastLost = nil }
+    private func refreshAll() {
+        for it in items { refreshStatus(it) }
+    }
+
+    private func refreshStatus(_ it: TrackedItem) {
+        var s = state(it.id)
+        defer { if live[it.id] != s { live[it.id] = s } }
+        // An open connection means it's with us.
+        if s.isConnected {
+            if s.status != .connected { s.status = .connected; s.lastLost = nil }
             return
         }
-        guard let seen = lastSighting else { status = .connecting; return }
-        let silent = Date().timeIntervalSince(seen) > graceSeconds
+        guard let seen = s.lastSighting else { s.status = .connecting; return }
+        let silent = Date().timeIntervalSince(seen) > it.graceSeconds
         // In area mode a long silence usually just means the cap is napping nearby, so don't
-        // show LOST on a timer, the notification fires only when you actually leave the area.
-        if alertOnLeaveArea {
-            if silent, status == .connected { status = .connecting; rssi = nil }
-        } else if silent, status != .lost {
-            status = .lost; lastLost = seen; rssi = nil
+        // show LOST on a timer; the notification fires only when you actually leave the area.
+        if it.alertOnLeaveArea {
+            if silent, s.status == .connected { s.status = .connecting; s.rssi = nil }
+        } else if silent, s.status != .lost {
+            s.status = .lost; s.lastLost = seen; s.rssi = nil
         }
+    }
+
+    // MARK: - Leaving
+
+    /// Left a trusted place set to "remind": nudge for every item that didn't come with you.
+    private func handleLeftPlace(_ p: Place) {
+        guard p.mode == .remind else { return }
+        for it in items where it.alertsEnabled {
+            let s = state(it.id)
+            let withMe = s.isConnected || (s.lastSighting.map { Date().timeIntervalSince($0) < 90 } ?? false)
+            if withMe { continue }
+            scheduleLostAlert(it.id, after: verifySeconds,
+                              body: "You left \(p.name) without \(it.title). Grab it?")
+        }
+    }
+
+    /// The phone left the area where this item was last heard. If we don't clearly have it
+    /// right now, arm a short verification: alert unless it shows up within the window.
+    private func handleLeftArea(_ id: UUID) {
+        guard let it = item(id), it.alertsEnabled, it.alertOnLeaveArea else { return }
+        let loc = LocationRecorder.shared
+        // Item sitting in a trusted place? The place's own logic owns it (and honours "ignore").
+        if let c = loc.area[id]?.coordinate ?? loc.lastSeen[id]?.coordinate,
+           TrustedPlaces.shared.containing(c) != nil {
+            return
+        }
+        let s = state(id)
+        let heardJustNow = s.isConnected || (s.lastSighting.map { Date().timeIntervalSince($0) < 20 } ?? false)
+        if heardJustNow {
+            loc.recordNow(for: id)
+            lastAreaArm[id] = Date()
+            loc.armGeofence(for: id, radius: it.areaRadius)
+            return
+        }
+        scheduleLostAlert(id, after: verifySeconds,
+                          body: "You seem to have left without it. Tap to see where it is.")
     }
 
     // MARK: - Alerts
 
-    /// Time-based alert (used only when "alert on leave area" is off).
-    private func rescheduleLostAlert() {
-        guard !alertOnLeaveArea else { return }
-        scheduleLostAlert(after: max(graceSeconds, 30),
-                          body: "Not heard from in \(Int(graceSeconds / 60)) min. Tap to see where it was last seen.")
+    private func alertID(_ id: UUID) -> String { "ble-lost-\(id.uuidString)" }
+
+    /// Time-based alert (only when "leave area" is off for this item).
+    private func rescheduleLostAlert(_ id: UUID, force: Bool = false) {
+        guard let it = item(id), !it.alertOnLeaveArea else { return }
+        let now = Date()
+        guard force || now.timeIntervalSince(lastTimerArm[id] ?? .distantPast) > 10 else { return }
+        lastTimerArm[id] = now
+        scheduleLostAlert(id, after: max(it.graceSeconds, 30),
+                          body: "Not heard from in \(Int(it.graceSeconds / 60)) min. Tap to see where it was last seen.")
     }
 
-    private func scheduleLostAlert(after: TimeInterval, body: String) {
-        cancelLostAlert()
-        guard alertsEnabled, watchedName != nil else { return }
+    private func scheduleLostAlert(_ id: UUID, after: TimeInterval, body: String) {
+        cancelLostAlert(id)
+        guard let it = item(id), it.alertsEnabled else { return }
         let c = UNMutableNotificationContent()
-        c.title = "\(displayName) left behind"
+        c.title = "\(it.title) left behind"
         c.body = body
         c.sound = .defaultCritical
         c.interruptionLevel = .timeSensitive
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(after, 1), repeats: false)
         UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: lostAlertID, content: c, trigger: trigger))
+            UNNotificationRequest(identifier: alertID(id), content: c, trigger: trigger))
     }
 
-    private func cancelLostAlert() {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [lostAlertID])
+    private func cancelLostAlert(_ id: UUID) {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [alertID(id)])
+    }
+
+    // MARK: - Persistence
+
+    private func saveItems() {
+        if let d = try? JSONEncoder().encode(items) { UserDefaults.standard.set(d, forKey: itemsKey) }
+    }
+
+    private func persistSightings() {
+        lastPersist = Date()
+        var out: [String: Date] = [:]
+        for (id, s) in live { if let t = s.lastSighting { out[id.uuidString] = t } }
+        UserDefaults.standard.set(out, forKey: sightingsKey)
+    }
+
+    private func saveHeld() {
+        UserDefaults.standard.set(held.reduce(into: [String: String]()) { $0[$1.key.uuidString] = $1.value.identifier.uuidString },
+                                  forKey: heldKey)
+    }
+
+    private func loadItems() {
+        let ud = UserDefaults.standard
+        if let d = ud.data(forKey: itemsKey), let saved = try? JSONDecoder().decode([TrackedItem].self, from: d) {
+            items = saved
+        } else {
+            migrateSingleItem()
+        }
+        let seen = ud.dictionary(forKey: sightingsKey) as? [String: Date] ?? [:]
+        for it in items {
+            var s = ItemLive()
+            s.lastSighting = seen[it.id.uuidString]
+            live[it.id] = s
+        }
+    }
+
+    /// Builds before multi-item kept one item in loose keys. Carry it over with its settings.
+    private func migrateSingleItem() {
+        let ud = UserDefaults.standard
+        guard let name = ud.string(forKey: "watchedPeripheralName") else { return }
+        var it = TrackedItem(bluetoothName: name,
+                             matchPrefix: ud.string(forKey: "matchPrefix") ?? Self.defaultPrefix(for: name),
+                             services: ud.stringArray(forKey: "watchedServiceUUIDs") ?? [],
+                             colorIndex: 0)
+        it.displayName = ud.string(forKey: "customDisplayName") ?? ""
+        let t = ud.double(forKey: "awayTimeout"); if t > 0 { it.graceSeconds = t }
+        let r = ud.double(forKey: "areaRadius"); if r > 0 { it.areaRadius = r }
+        it.alertsEnabled = ud.object(forKey: "alertsEnabled") as? Bool ?? true
+        it.alertOnLeaveArea = ud.object(forKey: "alertOnLeaveArea") as? Bool ?? true
+        it.notifyReturns = ud.object(forKey: "notifyReturns") as? Bool ?? false
+        it.holdConnection = ud.object(forKey: "holdConnection") as? Bool ?? false
+        it.disablePowerSaving = ud.object(forKey: "disablePowerSaving") as? Bool ?? false
+        items = [it]
+        saveItems()
+        if let last = ud.object(forKey: "lastSightingDate") as? Date {
+            ud.set([it.id.uuidString: last], forKey: sightingsKey)
+        }
+        LocationRecorder.shared.adoptLegacyFix(for: it.id)
     }
 }
 
@@ -469,9 +538,13 @@ final class BLEMonitor: NSObject, ObservableObject {
 
 extension BLEMonitor: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
-        // Relaunched in the background; reclaim any connection we were holding.
-        if let ps = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral], let p = ps.first {
-            connected = p
+        // Relaunched in the background; reclaim the links we were holding, by item.
+        guard let ps = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] else { return }
+        let map = UserDefaults.standard.dictionary(forKey: heldKey) as? [String: String] ?? [:]
+        for (itemStr, perStr) in map {
+            guard let id = UUID(uuidString: itemStr), item(id) != nil,
+                  let p = ps.first(where: { $0.identifier.uuidString == perStr }) else { continue }
+            held[id] = p
             p.delegate = self
         }
     }
@@ -482,41 +555,54 @@ extension BLEMonitor: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) {
-        guard p.identifier == connected?.identifier else { return }
-        isConnected = true
-        status = .connected
-        lastLost = nil
-        lastSighting = Date()
-        UserDefaults.standard.set(lastSighting, forKey: lastSeenKey)
-        // While connected it's with us, so no left-behind alert should be pending.
-        cancelLostAlert()
-        LocationRecorder.shared.recordNow()
-        if alertOnLeaveArea { LocationRecorder.shared.armGeofence(radius: areaRadius) }
-        if finding { startRssiPoll() }
+        guard let id = itemID(for: p), let it = item(id) else { return }
+        var s = state(id)
+        s.isConnected = true
+        s.status = .connected
+        s.lastLost = nil
+        s.lastSighting = Date()
+        live[id] = s
+        persistSightings()
+        cancelLostAlert(id)
+        LocationRecorder.shared.recordNow(for: id)
+        if it.alertOnLeaveArea {
+            lastAreaArm[id] = Date()
+            LocationRecorder.shared.armGeofence(for: id, radius: it.areaRadius)
+        }
+        if finding == id { startRssiPoll() }
         p.readRSSI()
         p.discoverServices(Larq.allServices)
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
-        guard p.identifier == connected?.identifier else { return }
-        isConnected = false
-        battery = nil
-        uartWriteChar = nil
-        stopRssiPoll()
-        // Just lost the link. Count grace from now, and record where we were, in case this is
-        // the moment it got left behind. Advertisements resume feeding the timer if still in range.
-        lastSighting = Date()
-        UserDefaults.standard.set(lastSighting, forKey: lastSeenKey)
-        LocationRecorder.shared.recordNow()
-        // Area mode: centre the geofence where we lost it; the exit is what alerts, not a timer.
-        if alertOnLeaveArea { LocationRecorder.shared.armGeofence(radius: areaRadius) }
-        else { rescheduleLostAlert() }
-        // Reconnect if the user holds the link, or while actively finding. Else let go.
-        if holdConnection || finding { central.connect(p, options: nil) } else { connected = nil }
+        guard let id = itemID(for: p), let it = item(id) else { return }
+        var s = state(id)
+        s.isConnected = false
+        s.battery = nil
+        // Just lost the link: count from now and record where we were, in case this is the
+        // moment it got left behind. Advertisements resume feeding it if still in range.
+        s.lastSighting = Date()
+        live[id] = s
+        persistSightings()
+        uartWrite[id] = nil
+        if finding == id { stopRssiPoll() }
+        LocationRecorder.shared.recordNow(for: id)
+        if it.alertOnLeaveArea {
+            lastAreaArm[id] = Date()
+            LocationRecorder.shared.armGeofence(for: id, radius: it.areaRadius)
+        } else {
+            rescheduleLostAlert(id, force: true)
+        }
+        if it.holdConnection || finding == id {
+            central.connect(p, options: nil)
+        } else {
+            held[id] = nil
+            saveHeld()
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
-        guard p.identifier == connected?.identifier, holdConnection else { return }
+        guard let id = itemID(for: p), item(id)?.holdConnection == true else { return }
         central.connect(p, options: nil)
     }
 
@@ -527,36 +613,38 @@ extension BLEMonitor: CBCentralManagerDelegate {
         let name = (ad[CBAdvertisementDataLocalNameKey] as? String) ?? p.name
         let services = (ad[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
 
-        if watchedName != nil, let name, matches(name) {
-            lastSeenPeripheral = p
-            sighted(rssi: r)
-            connectIfNeeded(p)
-            if finding, connected == nil { beginFinding() }
+        if let name {
+            for id in owners(of: name, p) {
+                lastPeripheral[id] = p
+                sighted(id, rssi: r)
+                connectIfNeeded(id, p)
+                if finding == id, held[id] == nil { beginFinding(id) }
+            }
         }
 
-        guard isScanning, let name else { return }
-        // Group by name, not peripheral ID: an address-rotating device would
-        // otherwise show up as a new row every few minutes.
+        guard isScanning, let name, !name.isEmpty else { return }
+        // Group by name, not peripheral ID: an address-rotating device would otherwise show
+        // up as a new row every few minutes.
         if let i = devices.firstIndex(where: { $0.name == name }) {
             devices[i].rssi = r
+            devices[i].connected = false
             for s in services where !devices[i].services.contains(s) { devices[i].services.append(s) }
         } else {
             devices.append(Device(id: p.identifier, name: name, rssi: r, services: services))
         }
-        devices.sort { $0.rssi > $1.rssi }
+        devices.sort { ($0.connected ? 0 : $0.rssi) > ($1.connected ? 0 : $1.rssi) }
     }
 }
 
-// MARK: - CBPeripheralDelegate (connection-hold extras)
+// MARK: - CBPeripheralDelegate
 
 extension BLEMonitor: CBPeripheralDelegate {
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
-        for s in p.services ?? [] {
-            p.discoverCharacteristics(nil, for: s)
-        }
+        for s in p.services ?? [] { p.discoverCharacteristics(nil, for: s) }
     }
 
     func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor s: CBService, error: Error?) {
+        guard let id = itemID(for: p) else { return }
         for c in s.characteristics ?? [] {
             switch c.uuid {
             case Larq.batteryLevel:
@@ -565,8 +653,8 @@ extension BLEMonitor: CBPeripheralDelegate {
             case Larq.uartNotify:
                 p.setNotifyValue(true, for: c)
             case Larq.uartWrite:
-                uartWriteChar = c
-                sendPowerSavingOff()
+                uartWrite[id] = c
+                sendPowerSavingOff(id)
             default:
                 break
             }
@@ -574,18 +662,14 @@ extension BLEMonitor: CBPeripheralDelegate {
     }
 
     func peripheral(_ p: CBPeripheral, didReadRSSI RSSI: NSNumber, error: Error?) {
-        guard error == nil, RSSI.intValue != 127 else { return }
-        rssi = RSSI.intValue
-        rssiAt = Date()
+        guard error == nil, RSSI.intValue != 127, let id = itemID(for: p) else { return }
+        live[id]?.rssi = RSSI.intValue
+        live[id]?.rssiAt = Date()
     }
 
     func peripheral(_ p: CBPeripheral, didUpdateValueFor c: CBCharacteristic, error: Error?) {
-        guard error == nil, let data = c.value else { return }
-        if c.uuid == Larq.batteryLevel, let b = data.first {
-            battery = Int(b)
-        }
-        // UART notifications (c.uuid == Larq.uartNotify) are command responses; we don't
-        // parse them here, the power-saving write is fire-and-forget.
+        guard error == nil, let data = c.value, let id = itemID(for: p) else { return }
+        if c.uuid == Larq.batteryLevel, let b = data.first { live[id]?.battery = Int(b) }
     }
 }
 
@@ -594,7 +678,7 @@ extension BLEMonitor: CBPeripheralDelegate {
 extension BLEMonitor: UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent n: UNNotification,
                                 withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void) {
-        refreshStatus()
+        refreshAll()
         done([.banner, .sound, .list])
     }
 }

@@ -14,15 +14,20 @@ struct ContentView: View {
     var body: some View {
         Map(position: $camera) {
             UserAnnotation()
-            // The geofence you must cross before a left-behind alert fires.
-            if let a = loc.area, m.watchedName != nil {
-                MapCircle(center: a.coordinate, radius: a.radius)
-                    .foregroundStyle(.blue.opacity(0.10))
-                    .stroke(.blue.opacity(0.45), lineWidth: 1.5)
+            ForEach(m.items) { it in
+                // The geofence you must cross before this item's left-behind alert fires.
+                // Radius comes from the item so the ring follows the slider live.
+                if it.alertOnLeaveArea, let a = loc.area[it.id] {
+                    MapCircle(center: a.coordinate, radius: max(it.areaRadius, 50))
+                        .foregroundStyle(it.color.opacity(0.10))
+                        .stroke(it.color.opacity(0.55), lineWidth: 1.5)
+                }
             }
-            if let fix = loc.lastSeen, m.watchedName != nil {
-                Annotation(m.displayName, coordinate: fix.coordinate, anchor: .bottom) {
-                    ItemPin(status: m.status)
+            ForEach(m.items) { it in
+                if let fix = loc.lastSeen[it.id] {
+                    Annotation(it.title, coordinate: fix.coordinate, anchor: .bottom) {
+                        ItemPin(color: it.color)
+                    }
                 }
             }
         }
@@ -32,7 +37,7 @@ struct ContentView: View {
         }
         .onAppear { loc.requestPermission() }
         .sheet(isPresented: .constant(true)) {
-            SheetRoot(focus: focusOnItem)
+            SheetRoot(focus: focus)
                 .presentationDetents([.height(110), .fraction(0.4), .large], selection: $detent)
                 .presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.4)))
                 .presentationCornerRadius(22)
@@ -40,14 +45,17 @@ struct ContentView: View {
         }
     }
 
-    private func focusOnItem() {
-        guard let fix = loc.lastSeen, m.status != .connected else {
+    /// Show the item's ring (or last-seen spot) on the map.
+    private func focus(_ id: UUID) {
+        guard let it = m.item(id) else { return }
+        let center = loc.area[id]?.coordinate ?? loc.lastSeen[id]?.coordinate
+        guard let center else {
             withAnimation { camera = .userLocation(fallback: .automatic) }
             return
         }
+        let span = max(400, it.areaRadius * 3)
         withAnimation {
-            camera = .region(MKCoordinateRegion(center: fix.coordinate,
-                                                latitudinalMeters: 400, longitudinalMeters: 400))
+            camera = .region(MKCoordinateRegion(center: center, latitudinalMeters: span, longitudinalMeters: span))
         }
         detent = .fraction(0.4)
     }
@@ -56,15 +64,12 @@ struct ContentView: View {
 // MARK: - Map pin
 
 struct ItemPin: View {
-    let status: BLEMonitor.LinkStatus
+    let color: Color
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
                 Circle().fill(.white).frame(width: 46, height: 46).shadow(radius: 3)
-                Circle().fill(LinearGradient(colors: [Color(red: 0.2, green: 0.88, blue: 0.82),
-                                                      Color(red: 0.04, green: 0.36, blue: 0.78)],
-                                             startPoint: .top, endPoint: .bottom))
-                    .frame(width: 38, height: 38)
+                Circle().fill(color.gradient).frame(width: 38, height: 38)
                 Image(systemName: "drop.fill").foregroundStyle(.white).font(.system(size: 18, weight: .semibold))
             }
             Triangle().fill(.white).frame(width: 12, height: 8).shadow(radius: 1)
@@ -84,12 +89,11 @@ struct Triangle: Shape {
 }
 
 struct ItemIcon: View {
+    var color: Color = ItemPalette.color(0)
     var size: CGFloat = 40
     var body: some View {
         ZStack {
-            Circle().fill(LinearGradient(colors: [Color(red: 0.2, green: 0.88, blue: 0.82),
-                                                  Color(red: 0.04, green: 0.36, blue: 0.78)],
-                                         startPoint: .top, endPoint: .bottom))
+            Circle().fill(color.gradient)
             Image(systemName: "drop.fill").foregroundStyle(.white).font(.system(size: size * 0.45, weight: .semibold))
         }
         .frame(width: size, height: size)
@@ -99,7 +103,7 @@ struct ItemIcon: View {
 // MARK: - Sheet with tabs
 
 struct SheetRoot: View {
-    let focus: () -> Void
+    let focus: (UUID) -> Void
     var body: some View {
         TabView {
             ItemsTab(focus: focus)
@@ -114,21 +118,13 @@ struct SheetRoot: View {
 
 struct ItemsTab: View {
     @ObservedObject var m = BLEMonitor.shared
-    @ObservedObject var loc = LocationRecorder.shared
-    let focus: () -> Void
+    let focus: (UUID) -> Void
     @State private var showAdd = false
 
     var body: some View {
         NavigationStack {
             List {
-                if m.watchedName != nil {
-                    NavigationLink {
-                        ItemDetail()
-                    } label: {
-                        ItemRow(name: m.displayName)
-                    }
-                    .simultaneousGesture(TapGesture().onEnded { focus() })
-                } else {
+                if m.items.isEmpty {
                     VStack(spacing: 10) {
                         ItemIcon(size: 56)
                         Text("No Items").font(.headline)
@@ -137,6 +133,16 @@ struct ItemsTab: View {
                         Button("Add Item") { showAdd = true }.buttonStyle(.borderedProminent)
                     }
                     .frame(maxWidth: .infinity).padding(.vertical, 12)
+                } else {
+                    ForEach(m.items) { it in
+                        NavigationLink {
+                            ItemDetail(id: it.id)
+                        } label: {
+                            ItemRow(id: it.id)
+                        }
+                        .simultaneousGesture(TapGesture().onEnded { focus(it.id) })
+                    }
+                    .onDelete { idx in idx.map { m.items[$0].id }.forEach(m.remove) }
                 }
             }
             .listStyle(.plain)
@@ -152,24 +158,26 @@ struct ItemsTab: View {
 struct ItemRow: View {
     @ObservedObject var m = BLEMonitor.shared
     @ObservedObject var loc = LocationRecorder.shared
-    let name: String
+    let id: UUID
 
     var body: some View {
-        HStack(spacing: 12) {
-            ItemIcon()
-            VStack(alignment: .leading, spacing: 2) {
-                Text(name).font(.headline)
-                StatusLine().font(.subheadline).foregroundStyle(.secondary)
+        if let it = m.item(id) {
+            HStack(spacing: 12) {
+                ItemIcon(color: it.color)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(it.title).font(.headline)
+                    StatusLine(id: id).font(.subheadline).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let d = distanceText { Text(d).font(.subheadline).foregroundStyle(.secondary) }
             }
-            Spacer()
-            if let d = distanceText { Text(d).font(.subheadline).foregroundStyle(.secondary) }
+            .padding(.vertical, 4)
         }
-        .padding(.vertical, 4)
     }
 
     private var distanceText: String? {
-        if m.status == .connected { return nil }
-        guard let fix = loc.lastSeen, let me = loc.current else { return nil }
+        if m.state(id).status == .connected { return nil }
+        guard let fix = loc.lastSeen[id], let me = loc.current else { return nil }
         let meters = me.distance(from: CLLocation(latitude: fix.lat, longitude: fix.lon))
         return Measurement(value: meters, unit: UnitLength.meters)
             .formatted(.measurement(width: .abbreviated, usage: .road))
@@ -178,14 +186,16 @@ struct ItemRow: View {
 
 struct StatusLine: View {
     @ObservedObject var m = BLEMonitor.shared
+    let id: UUID
     var body: some View {
-        switch m.status {
+        let s = m.state(id)
+        switch s.status {
         case .connected:
             Text("With You").foregroundStyle(.green)
         case .connecting:
             Text("Searching...")
         case .lost:
-            if let t = m.lastLost {
+            if let t = s.lastLost {
                 Text("Left Behind · \(t, style: .relative) ago").foregroundStyle(.red)
             } else {
                 Text("Left Behind").foregroundStyle(.red)
@@ -202,16 +212,27 @@ struct ItemDetail: View {
     @ObservedObject var m = BLEMonitor.shared
     @ObservedObject var loc = LocationRecorder.shared
     @Environment(\.dismiss) private var dismiss
+    let id: UUID
     @State private var address: String?
     @State private var showNearby = false
     @State private var confirmRemove = false
 
     var body: some View {
+        if let it = m.item(id) {
+            content(it)
+        } else {
+            ContentUnavailableView("Item Removed", systemImage: "trash")
+        }
+    }
+
+    @ViewBuilder
+    private func content(_ it: TrackedItem) -> some View {
+        let s = m.state(id)
         List {
             Section {
                 VStack(alignment: .leading, spacing: 4) {
-                    StatusLine().font(.subheadline)
-                    if m.status != .connected, let a = address {
+                    StatusLine(id: id).font(.subheadline)
+                    if s.status != .connected, let a = address {
                         Text("Near \(a)").font(.subheadline).foregroundStyle(.secondary)
                     }
                 }
@@ -222,17 +243,17 @@ struct ItemDetail: View {
             Section {
                 HStack(spacing: 12) {
                     ActionCard(title: "Directions", icon: "car.fill",
-                               subtitle: loc.lastSeen == nil ? "No location" : "Last seen spot",
-                               enabled: loc.lastSeen != nil) { openInMaps() }
+                               subtitle: loc.lastSeen[id] == nil ? "No location" : "Last seen spot",
+                               enabled: loc.lastSeen[id] != nil) { openInMaps(it) }
                     ActionCard(title: "Find Nearby", icon: "dot.radiowaves.left.and.right",
-                               subtitle: m.status == .connected ? "In range" : "Listen for signal",
+                               subtitle: s.status == .connected ? "In range" : "Listen for signal",
                                enabled: true) { showNearby = true }
                 }
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets())
             }
 
-            if !m.backgroundCapable {
+            if !it.backgroundCapable {
                 Section {
                     Label("This item doesn't advertise a service ID, so iOS only lets FindMyBLE hear it while the app is open.",
                           systemImage: "exclamationmark.triangle.fill")
@@ -242,16 +263,14 @@ struct ItemDetail: View {
 
             Section {
                 LabeledContent("Name") {
-                    TextField(BLEMonitor.defaultPrefix(for: m.watchedName ?? "")
+                    TextField(BLEMonitor.defaultPrefix(for: it.bluetoothName)
                                 .trimmingCharacters(in: CharacterSet(charactersIn: "_- ")),
-                              text: $m.customName)
+                              text: m.binding(id, \.displayName, default: ""))
                         .multilineTextAlignment(.trailing)
                         .submitLabel(.done)
                 }
-                if let raw = m.watchedName {
-                    LabeledContent("Bluetooth name") {
-                        Text(raw).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                    }
+                LabeledContent("Bluetooth name") {
+                    Text(it.bluetoothName).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
             } header: {
                 Text("Display")
@@ -261,7 +280,7 @@ struct ItemDetail: View {
 
             Section {
                 LabeledContent("Name starts with") {
-                    TextField("LARQ_", text: $m.matchPrefix)
+                    TextField("LARQ_", text: m.binding(id, \.matchPrefix, default: ""))
                         .multilineTextAlignment(.trailing)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -269,48 +288,49 @@ struct ItemDetail: View {
             } header: {
                 Text("Matching")
             } footer: {
-                Text("Any device advertising a name that starts with this counts as your item, so a rotating name suffix doesn't matter. Another LARQ nearby would also match.")
+                Text(samePrefixWarning(it)
+                     ?? "Any device advertising a name that starts with this counts as this item, so a rotating name suffix doesn't matter.")
             }
 
             Section {
-                Toggle("Keep Connected", isOn: $m.holdConnection)
-                if m.holdConnection {
-                    LabeledContent("Link") { Text(m.isConnected ? "Connected" : "Reconnecting...") }
-                    if let b = m.battery {
-                        LabeledContent("Battery") { Text("\(b)%") }
+                Toggle("Keep Connected", isOn: m.binding(id, \.holdConnection, default: false))
+                if it.holdConnection {
+                    LabeledContent("Link") { Text(s.isConnected ? "Connected" : "Reconnecting...") }
+                    if let b = s.battery { LabeledContent("Battery") { Text("\(b)%") } }
+                    if it.looksLikeLarq {
+                        Toggle("Stop Cap Power-Saving", isOn: m.binding(id, \.disablePowerSaving, default: false))
                     }
-                    Toggle("Stop Cap Power-Saving", isOn: $m.disablePowerSaving)
                 }
             } header: {
                 Text("Connection")
             } footer: {
-                Text("Keeping a live connection usually stops the cap from dropping off, and lets it report battery. Stop Cap Power-Saving tells a LARQ cap to keep its radio awake (LARQ only, uses a little more cap battery).")
+                Text("Keeping a live connection usually stops a device from dropping off, and lets it report battery. A connected device stops advertising, so it shows as \"Connected\" in Add Item.")
             }
 
             Section {
-                Toggle("Notify When Left Behind", isOn: $m.alertsEnabled)
-                if m.alertsEnabled {
-                    Toggle("Only When I Leave the Area", isOn: $m.alertOnLeaveArea)
-                    if m.alertOnLeaveArea {
-                        DiameterStepper(title: "Area size", radius: $m.areaRadius)
+                Toggle("Notify When Left Behind", isOn: m.binding(id, \.alertsEnabled, default: true))
+                if it.alertsEnabled {
+                    Toggle("Only When I Leave the Area", isOn: m.binding(id, \.alertOnLeaveArea, default: true))
+                    if it.alertOnLeaveArea {
+                        GeofenceSlider(radius: m.binding(id, \.areaRadius, default: 150))
+                    } else {
+                        Stepper("Alert after \(Int(it.graceSeconds / 60)) min",
+                                value: m.binding(id, \.graceSeconds, default: 180), in: 60...1800, step: 60)
                     }
-                    Toggle("Notify When Back", isOn: $m.notifyReturns)
-                    if !m.alertOnLeaveArea {
-                        Stepper("Alert after \(Int(m.graceSeconds / 60)) min", value: $m.graceSeconds, in: 60...1800, step: 60)
-                    }
+                    Toggle("Notify When Back", isOn: m.binding(id, \.notifyReturns, default: false))
                 }
-                if let t = m.lastSighting {
+                if let t = s.lastSighting {
                     LabeledContent("Last heard") { Text("\(t, style: .relative) ago") }
                 }
             } header: {
                 Text("Notifications")
             } footer: {
-                Text(m.alertOnLeaveArea
-                     ? "Alerts only when you physically walk away from where the item last was. Best for devices like the LARQ cap that go silent for minutes at a time while sitting right next to you. Needs location set to Always."
+                Text(it.alertOnLeaveArea
+                     ? "Alerts only when you walk out of this item's ring on the map. Bigger ring, fewer false alarms but a later alert. Needs location set to Always."
                      : "Alerts when the item hasn't been heard from for this long. Simple, but a device that sleeps its radio will cause false alarms.")
             }
 
-            if let fix = loc.lastSeen {
+            if let fix = loc.lastSeen[id] {
                 Section("Last Seen") {
                     LabeledContent("Time", value: fix.date.formatted(date: .abbreviated, time: .shortened))
                     LabeledContent("Accuracy", value: "about \(Int(max(fix.accuracy, 15))) m")
@@ -321,27 +341,62 @@ struct ItemDetail: View {
                 Button("Remove This Item", role: .destructive) { confirmRemove = true }
             }
         }
-        .navigationTitle(m.displayName)
-        .task(id: loc.lastSeen) { await geocode() }
-        .sheet(isPresented: $showNearby) { FindNearbyView() }
-        .confirmationDialog("Stop tracking this item?", isPresented: $confirmRemove, titleVisibility: .visible) {
-            Button("Remove", role: .destructive) { m.unwatch(); dismiss() }
+        .navigationTitle(it.title)
+        .task(id: loc.lastSeen[id]) { await geocode() }
+        .sheet(isPresented: $showNearby) { FindNearbyView(id: id) }
+        .confirmationDialog("Stop tracking \(it.title)?", isPresented: $confirmRemove, titleVisibility: .visible) {
+            Button("Remove", role: .destructive) { dismiss(); m.remove(id) }
         }
     }
 
+    private func samePrefixWarning(_ it: TrackedItem) -> String? {
+        let p = it.matchPrefix.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !p.isEmpty else { return "Empty prefix: nothing will match this item." }
+        let clash = m.items.contains { o in
+            guard o.id != it.id else { return false }
+            let q = o.matchPrefix.trimmingCharacters(in: .whitespaces).lowercased()
+            return !q.isEmpty && (q.hasPrefix(p) || p.hasPrefix(q))
+        }
+        return clash
+            ? "Another item uses an overlapping prefix, so FindMyBLE can't always tell them apart by name. Keep Connected ties each item to its own device."
+            : nil
+    }
+
     private func geocode() async {
-        guard let fix = loc.lastSeen else { address = nil; return }
+        guard let fix = loc.lastSeen[id] else { address = nil; return }
         let pm = try? await CLGeocoder()
             .reverseGeocodeLocation(CLLocation(latitude: fix.lat, longitude: fix.lon)).first
         address = [pm?.subThoroughfare, pm?.thoroughfare].compactMap { $0 }.joined(separator: " ")
             .nilIfEmpty ?? pm?.name
     }
 
-    private func openInMaps() {
-        guard let fix = loc.lastSeen else { return }
+    private func openInMaps(_ it: TrackedItem) {
+        guard let fix = loc.lastSeen[id] else { return }
         let item = MKMapItem(placemark: MKPlacemark(coordinate: fix.coordinate))
-        item.name = "\(m.displayName) last seen"
+        item.name = "\(it.title) last seen"
         item.openInMaps(launchOptions: [MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking])
+    }
+}
+
+/// The item's geofence radius. The ring on the map follows it live; the real iOS region is
+/// resized once the slider settles.
+struct GeofenceSlider: View {
+    @Binding var radius: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            LabeledContent("Geofence radius") {
+                Text("\(Int(radius)) m").monospacedDigit()
+            }
+            Slider(value: $radius, in: TrackedItem.radiusRange, step: 25) {
+                Text("Geofence radius")
+            } minimumValueLabel: {
+                Text("50 m").font(.caption2).foregroundStyle(.secondary)
+            } maximumValueLabel: {
+                Text("1.5 km").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -373,6 +428,7 @@ struct ActionCard: View {
 struct FindNearbyView: View {
     @ObservedObject var m = BLEMonitor.shared
     @Environment(\.dismiss) private var dismiss
+    let id: UUID
 
     // Self-calibrating: the strongest signal seen this session becomes "here", everything
     // scales from there. This cap advertises weakly, so fixed dBm thresholds are useless.
@@ -380,17 +436,18 @@ struct FindNearbyView: View {
     @State private var now = Date()
     private let clock = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
-    /// A reading older than this is stale (the cap went quiet), not "far".
+    /// A reading older than this is stale (the device went quiet), not "far".
     private let freshWindow: TimeInterval = 8
+
+    private var s: ItemLive { m.state(id) }
 
     var body: some View {
         ZStack {
-            LinearGradient(colors: [Color(red: 0.04, green: 0.36, blue: 0.78),
-                                    Color(red: 0.02, green: 0.15, blue: 0.4)],
+            LinearGradient(colors: [(m.item(id)?.color ?? .blue), Color(red: 0.02, green: 0.1, blue: 0.3)],
                            startPoint: .top, endPoint: .bottom).ignoresSafeArea()
             VStack(spacing: 30) {
                 HStack {
-                    Text(m.displayName).font(.headline)
+                    Text(m.item(id)?.title ?? "Item").font(.headline)
                     Spacer()
                     Button { dismiss() } label: { Image(systemName: "xmark.circle.fill").font(.title2) }
                 }
@@ -406,8 +463,8 @@ struct FindNearbyView: View {
                 Text(detail).font(.subheadline).foregroundStyle(.white.opacity(0.7))
                 Spacer()
                 Text(fresh
-                     ? "Move around. The circle grows as you get closer. Pick up or jostle the bottle to wake it if it's quiet."
-                     : "Waiting to hear the cap. It sleeps to save battery, so give it a shake or open the lid.")
+                     ? "Move around. The circle grows as you get closer."
+                     : "Waiting to hear it. A LARQ cap sleeps to save battery, so give it a shake or open the lid.")
                     .font(.footnote).foregroundStyle(.white.opacity(0.7))
                     .multilineTextAlignment(.center)
             }
@@ -415,20 +472,20 @@ struct FindNearbyView: View {
         }
         .onReceive(clock) { t in
             now = t
-            if let r = m.rssi, fresh, r > peak { peak = r }
+            if let r = s.rssi, fresh, r > peak { peak = r }
         }
-        .onAppear { m.beginFinding(); if let r = m.rssi { peak = r } }
-        .onDisappear { m.endFinding() }
+        .onAppear { m.beginFinding(id); if let r = s.rssi { peak = r } }
+        .onDisappear { m.endFinding(id) }
     }
 
     private var fresh: Bool {
-        guard let at = m.rssiAt else { return false }
+        guard let at = s.rssiAt else { return false }
         return now.timeIntervalSince(at) < freshWindow
     }
 
     /// 0.12 .. 1 scaled over a 25 dB window below the strongest signal seen.
     private var closeness: CGFloat {
-        guard fresh, let r = m.rssi else { return 0.12 }
+        guard fresh, let r = s.rssi else { return 0.12 }
         let span = 25.0
         let ratio = (Double(r) - (Double(peak) - span)) / span
         return CGFloat(min(1, max(0.12, ratio)))
@@ -444,8 +501,8 @@ struct FindNearbyView: View {
     }
 
     private var detail: String {
-        guard let r = m.rssi else { return "No signal yet" }
-        if !fresh { return "Last signal \(Int(now.timeIntervalSince(m.rssiAt ?? now)))s ago" }
+        guard let r = s.rssi else { return "No signal yet" }
+        if !fresh { return "Last signal \(Int(now.timeIntervalSince(s.rssiAt ?? now)))s ago" }
         return "\(r) dBm"
     }
 }
@@ -463,14 +520,23 @@ struct AddItemView: View {
                 Section {
                     ForEach(filtered) { d in
                         Button {
-                            m.watch(d)
+                            m.add(d)
                             dismiss()
                         } label: {
                             HStack {
                                 Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(.tint)
-                                Text(d.name).foregroundStyle(.primary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(d.name).foregroundStyle(.primary)
+                                    if let t = trackedAs(d) {
+                                        Text("Matches \(t)").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
                                 Spacer()
-                                SignalBars(rssi: d.rssi)
+                                if d.connected {
+                                    Text("Connected").font(.caption).foregroundStyle(.secondary)
+                                } else {
+                                    SignalBars(rssi: d.rssi)
+                                }
                             }
                         }
                     }
@@ -481,7 +547,7 @@ struct AddItemView: View {
                         if m.isScanning { ProgressView() }
                     }
                 } footer: {
-                    Text("Close the LARQ app before adding, it can hold the bottle's only connection.")
+                    Text("Don't see your LARQ? Open the lid or give the bottle a shake to wake the cap, and close the LARQ app, which can hold the cap's only connection.")
                 }
             }
             .searchable(text: $filter, prompt: "Filter (e.g. LARQ)")
@@ -498,6 +564,10 @@ struct AddItemView: View {
                 }
             }
         }
+    }
+
+    private func trackedAs(_ d: BLEMonitor.Device) -> String? {
+        m.items.first { $0.matches(d.name) }?.title
     }
 
     private var filtered: [BLEMonitor.Device] {

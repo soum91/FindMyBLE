@@ -2,9 +2,8 @@ import Foundation
 import CoreLocation
 import UIKit
 
-/// Grabs the phone's location at the moment the device drops, so you know where you left it.
-/// The phone was within BLE range (roughly 10 to 30 m) when the link died, so this is
-/// effectively the bottle's last known spot.
+/// Per item: where the phone was when the item was last heard (its "last seen" spot), and a
+/// geofence around that spot that you must cross before a left-behind alert can fire.
 final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let shared = LocationRecorder()
 
@@ -23,35 +22,31 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         var coordinate: CLLocationCoordinate2D { .init(latitude: lat, longitude: lon) }
     }
 
-    @Published var lastSeen: Fix?
-    /// The live geofence, so the map can draw the ring you must cross to get an alert.
-    @Published var area: Area?
+    @Published var lastSeen: [UUID: Fix] = [:]
+    /// Live geofence per item, so the map can draw each ring you must cross to get an alert.
+    @Published var area: [UUID: Area] = [:]
     @Published var authStatus: CLAuthorizationStatus = .notDetermined
 
-    /// Called when the phone leaves the area where the item was last heard. Background-safe:
-    /// region monitoring relaunches the app to deliver this.
-    var onLeftArea: (() -> Void)?
-    /// Called when the phone leaves a trusted place (confirmed by a real fix).
+    /// Phone left an item's area. Background-safe: region monitoring relaunches the app.
+    var onLeftArea: ((UUID) -> Void)?
+    /// Phone left a trusted place (confirmed by a real fix).
     var onLeftPlace: ((Place) -> Void)?
 
     private let manager = CLLocationManager()
-    private let storeKey = "lastSeenFix"
-    private let regionID = "item-area"
+    private let storeKey = "lastSeenFixes.v2"
+    private let legacyStoreKey = "lastSeenFix"
+    private let legacyRegionID = "item-area"
+    private let itemPrefix = "item-"
     private var bgTask: UIBackgroundTaskIdentifier = .invalid
-    private var pending = false
-    private var pendingArmRadius: Double?
 
-    // The item geofence we armed, kept so an exit can be sanity-checked against a real fix.
-    private var regionCenter: CLLocationCoordinate2D?
-    private var regionRadius: Double = 150
-    // Trusted-place regions, keyed by region id, so their exits can be verified and routed.
+    /// Items waiting on a fresh fix to record their last-seen spot.
+    private var pendingRecord: Set<UUID> = []
+    /// Items waiting on a fix to centre a new geofence, with the radius to use.
+    private var pendingArm: [UUID: Double] = [:]
+    /// Trusted-place regions, keyed by region id, so their exits can be verified and routed.
     private var placeRegions: [String: Place] = [:]
-
-    // One exit being confirmed at a time.
-    private var verifyingExit = false
-    private var pendingExitID: String?
-    private var pendingExitCenter: CLLocationCoordinate2D?
-    private var pendingExitRadius: Double = 150
+    /// Region exits waiting on a trustworthy fix before we believe them.
+    private var pendingExits: [String: (center: CLLocationCoordinate2D, radius: Double)] = [:]
 
     /// How far beyond the radius, with a trustworthy fix, before we believe you actually left.
     private let exitMargin: Double = 120
@@ -63,16 +58,24 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         manager.desiredAccuracy = kCLLocationAccuracyBest
         authStatus = manager.authorizationStatus
         if let d = UserDefaults.standard.data(forKey: storeKey),
-           let f = try? JSONDecoder().decode(Fix.self, from: d) {
-            lastSeen = f
+           let f = try? JSONDecoder().decode([String: Fix].self, from: d) {
+            lastSeen = Dictionary(uniqueKeysWithValues: f.compactMap { k, v in UUID(uuidString: k).map { ($0, v) } })
+        }
+        // After a background relaunch the regions are still monitored by iOS but our memory is
+        // empty. Rebuild the rings from what iOS reports so exits can still be verified.
+        for r in manager.monitoredRegions {
+            guard let c = r as? CLCircularRegion else { continue }
+            if c.identifier == legacyRegionID {
+                manager.stopMonitoring(for: c)   // single-item build's region, replaced per item
+            } else if let id = itemID(c.identifier) {
+                area[id] = Area(lat: c.center.latitude, lon: c.center.longitude, radius: c.radius)
+            }
         }
     }
 
     /// The phone's most recent fix, for "distance from you".
     var current: CLLocation? { manager.location }
 
-    /// "Always" is needed so a fix can be taken while the app is in the background,
-    /// which is exactly when you walk away from the bottle.
     func requestPermission() {
         switch manager.authorizationStatus {
         case .notDetermined: manager.requestWhenInUseAuthorization()
@@ -81,50 +84,72 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         }
     }
 
-    /// Called on disconnect. Saves the cached fix immediately, then asks for a fresh one.
-    func recordNow() {
+    /// The single-item build kept one fix. Hand it to the migrated item.
+    func adoptLegacyFix(for id: UUID) {
+        guard lastSeen[id] == nil,
+              let d = UserDefaults.standard.data(forKey: legacyStoreKey),
+              let f = try? JSONDecoder().decode(Fix.self, from: d) else { return }
+        lastSeen[id] = f
+        persist()
+    }
+
+    /// Item was just heard (or just dropped). Save the cached fix now, then ask for a fresh one.
+    func recordNow(for id: UUID) {
         if let loc = manager.location, Date().timeIntervalSince(loc.timestamp) < 120 {
-            save(loc)
+            save(loc, for: [id])
         }
         guard manager.authorizationStatus == .authorizedAlways
                 || manager.authorizationStatus == .authorizedWhenInUse else { return }
-        pending = true
-        bgTask = UIApplication.shared.beginBackgroundTask(withName: "lastSeenFix") { [weak self] in
-            self?.endBG()
-        }
-        manager.requestLocation()
+        pendingRecord.insert(id)
+        requestFix(named: "lastSeenFix")
     }
 
-    // MARK: Geofence around the item's current spot
+    func forget(_ id: UUID) {
+        disarmGeofence(for: id)
+        pendingRecord.remove(id)
+        lastSeen[id] = nil
+        persist()
+    }
 
-    /// (Re)centre a geofence on where we are now. Call this whenever we have BLE contact,
-    /// so "the area the item is in" tracks the item while it's with you.
-    func armGeofence(radius: Double) {
-        guard authStatus == .authorizedAlways else { return }
-        guard CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else { return }
+    // MARK: Item geofences
+
+    /// (Re)centre an item's geofence on where we are now. Called while we have BLE contact,
+    /// so "the area the item is in" follows the item while it's with you.
+    func armGeofence(for id: UUID, radius: Double) {
+        guard authStatus == .authorizedAlways,
+              CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else { return }
         if let loc = manager.location, Date().timeIntervalSince(loc.timestamp) < 120 {
-            startRegion(center: loc.coordinate, radius: radius)
+            startRegion(id, center: loc.coordinate, radius: radius)
         } else {
-            pendingArmRadius = radius
-            manager.requestLocation()
+            pendingArm[id] = radius
+            requestFix(named: "armGeofence")
         }
     }
 
-    /// Change the size of the live geofence without moving it. If nothing is armed yet,
-    /// arm one here at the new size.
-    func resizeGeofence(radius: Double) {
-        if let c = regionCenter, area != nil {
-            startRegion(center: c, radius: radius)
+    /// Change an item's geofence size without moving it. Arms one here if none is live.
+    func resizeGeofence(for id: UUID, radius: Double) {
+        if let a = area[id] {
+            startRegion(id, center: a.coordinate, radius: radius)
         } else {
-            armGeofence(radius: radius)
+            armGeofence(for: id, radius: radius)
         }
     }
 
-    func disarmGeofence() {
-        pendingArmRadius = nil
-        area = nil
-        for r in manager.monitoredRegions where r.identifier == regionID {
-            manager.stopMonitoring(for: r)
+    func disarmGeofence(for id: UUID) {
+        pendingArm[id] = nil
+        area[id] = nil
+        let rid = regionID(id)
+        pendingExits[rid] = nil
+        for r in manager.monitoredRegions where r.identifier == rid { manager.stopMonitoring(for: r) }
+    }
+
+    /// Drop rings for items that no longer exist.
+    func pruneGeofences(keeping ids: Set<UUID>) {
+        for r in manager.monitoredRegions {
+            if let id = itemID(r.identifier), !ids.contains(id) {
+                manager.stopMonitoring(for: r)
+                area[id] = nil
+            }
         }
     }
 
@@ -138,8 +163,7 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         placeRegions.removeAll()
         for p in places {
             let id = "place-\(p.id.uuidString)"
-            let clamped = min(max(p.radius, 50), manager.maximumRegionMonitoringDistance)
-            let region = CLCircularRegion(center: p.coordinate, radius: clamped, identifier: id)
+            let region = CLCircularRegion(center: p.coordinate, radius: clamp(p.radius), identifier: id)
             region.notifyOnEntry = false
             region.notifyOnExit = true
             manager.startMonitoring(for: region)
@@ -147,23 +171,46 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         }
     }
 
-    private func startRegion(center: CLLocationCoordinate2D, radius: Double) {
-        disarmGeofence()
-        let clamped = min(max(radius, 50), manager.maximumRegionMonitoringDistance)
-        regionCenter = center
-        regionRadius = clamped
-        area = Area(lat: center.latitude, lon: center.longitude, radius: clamped)
-        let region = CLCircularRegion(center: center, radius: clamped, identifier: regionID)
+    private func startRegion(_ id: UUID, center: CLLocationCoordinate2D, radius: Double) {
+        let rid = regionID(id)
+        for r in manager.monitoredRegions where r.identifier == rid { manager.stopMonitoring(for: r) }
+        pendingArm[id] = nil
+        let r = clamp(radius)
+        area[id] = Area(lat: center.latitude, lon: center.longitude, radius: r)
+        let region = CLCircularRegion(center: center, radius: r, identifier: rid)
         region.notifyOnEntry = false
         region.notifyOnExit = true
         manager.startMonitoring(for: region)
     }
 
-    private func save(_ loc: CLLocation) {
+    private func clamp(_ r: Double) -> Double { min(max(r, 50), manager.maximumRegionMonitoringDistance) }
+    private func regionID(_ id: UUID) -> String { itemPrefix + id.uuidString }
+    private func itemID(_ regionID: String) -> UUID? {
+        guard regionID.hasPrefix(itemPrefix) else { return nil }
+        return UUID(uuidString: String(regionID.dropFirst(itemPrefix.count)))
+    }
+
+    // MARK: Fixes
+
+    private func requestFix(named: String) {
+        if bgTask == .invalid {
+            bgTask = UIApplication.shared.beginBackgroundTask(withName: named) { [weak self] in self?.endBG() }
+        }
+        manager.desiredAccuracy = kCLLocationAccuracyBest
+        manager.requestLocation()
+    }
+
+    private func save(_ loc: CLLocation, for ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
         let f = Fix(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude,
                     accuracy: loc.horizontalAccuracy, date: loc.timestamp)
-        lastSeen = f
-        if let d = try? JSONEncoder().encode(f) { UserDefaults.standard.set(d, forKey: storeKey) }
+        for id in ids { lastSeen[id] = f }
+        persist()
+    }
+
+    private func persist() {
+        let out = Dictionary(uniqueKeysWithValues: lastSeen.map { ($0.key.uuidString, $0.value) })
+        if let d = try? JSONEncoder().encode(out) { UserDefaults.standard.set(d, forKey: storeKey) }
     }
 
     private func endBG() {
@@ -178,28 +225,27 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         if m.authorizationStatus == .authorizedAlways {
             syncPlaceRegions(TrustedPlaces.shared.places)
         }
-        // Step up from When In Use to Always right after the first grant.
         if m.authorizationStatus == .authorizedWhenInUse { m.requestAlwaysAuthorization() }
     }
 
     func locationManager(_ m: CLLocationManager, didUpdateLocations locs: [CLLocation]) {
-        if pending, let loc = locs.last { save(loc) }
-        pending = false
-        if let r = pendingArmRadius, let loc = locs.last {
-            pendingArmRadius = nil
-            startRegion(center: loc.coordinate, radius: r)
-        }
-        if verifyingExit, let loc = locs.last { resolveExit(with: loc) }
+        guard let loc = locs.last else { endBG(); return }
+        save(loc, for: pendingRecord)
+        pendingRecord.removeAll()
+        let arms = pendingArm
+        pendingArm.removeAll()
+        for (id, r) in arms { startRegion(id, center: loc.coordinate, radius: r) }
+        if !pendingExits.isEmpty { resolveExits(with: loc) }
         endBG()
     }
 
     func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {
-        pending = false
-        // Couldn't get a fix to confirm an exit: don't alert on a guess.
-        if verifyingExit {
-            verifyingExit = false
-            if pendingExitID == regionID, let c = regionCenter { startRegion(center: c, radius: regionRadius) }
-            pendingExitID = nil
+        pendingRecord.removeAll()
+        // Couldn't confirm an exit: don't alert on a guess. Re-arm item rings where they were.
+        let exits = pendingExits
+        pendingExits.removeAll()
+        for (rid, e) in exits {
+            if let id = itemID(rid) { startRegion(id, center: e.center, radius: e.radius) }
         }
         endBG()
     }
@@ -207,37 +253,32 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     func locationManager(_ m: CLLocationManager, didExitRegion region: CLRegion) {
         // Don't trust the raw exit. Indoors the fix jumps hundreds of metres while you stand
         // still, so confirm with a fresh high-accuracy fix before believing you actually left.
-        if region.identifier == regionID {
-            beginExitVerify(id: regionID, center: regionCenter, radius: regionRadius)
-        } else if let p = placeRegions[region.identifier] {
-            beginExitVerify(id: region.identifier, center: p.coordinate, radius: p.radius)
+        // Centre comes from the region itself, so this works after a cold background relaunch.
+        guard let c = region as? CLCircularRegion else { return }
+        if let p = placeRegions[c.identifier] {
+            pendingExits[c.identifier] = (p.coordinate, p.radius)
+        } else if itemID(c.identifier) != nil {
+            pendingExits[c.identifier] = (c.center, c.radius)
+        } else {
+            return
         }
+        requestFix(named: "exitCheck")
     }
 
-    private func beginExitVerify(id: String, center: CLLocationCoordinate2D?, radius: Double) {
-        guard let center else { return }
-        pendingExitID = id
-        pendingExitCenter = center
-        pendingExitRadius = radius
-        verifyingExit = true
-        manager.desiredAccuracy = kCLLocationAccuracyBest
-        bgTask = UIApplication.shared.beginBackgroundTask(withName: "exitCheck") { [weak self] in self?.endBG() }
-        manager.requestLocation()
-    }
-
-    private func resolveExit(with loc: CLLocation) {
-        verifyingExit = false
-        guard let center = pendingExitCenter, let id = pendingExitID else { return }
-        let d = loc.distance(from: CLLocation(latitude: center.latitude, longitude: center.longitude))
+    private func resolveExits(with loc: CLLocation) {
+        let exits = pendingExits
+        pendingExits.removeAll()
         let trustworthy = loc.horizontalAccuracy > 0 && loc.horizontalAccuracy <= maxTrustedAccuracy
-        if trustworthy && d > pendingExitRadius + exitMargin {
-            if id == regionID { onLeftArea?() }
-            else if let p = placeRegions[id] { onLeftPlace?(p) }
-        } else if id == regionID {
-            startRegion(center: center, radius: pendingExitRadius)  // drift: re-arm item geofence
+        for (rid, e) in exits {
+            let d = loc.distance(from: CLLocation(latitude: e.center.latitude, longitude: e.center.longitude))
+            let left = trustworthy && d > e.radius + exitMargin
+            if let id = itemID(rid) {
+                if left { onLeftArea?(id) }
+                else { startRegion(id, center: e.center, radius: e.radius) }  // drift: re-arm
+            } else if left, let p = placeRegions[rid] {
+                onLeftPlace?(p)
+            }
+            // Place regions stay monitored by iOS; nothing to re-arm.
         }
-        // Place regions stay monitored by iOS; nothing to re-arm.
-        pendingExitID = nil
-        pendingExitCenter = nil
     }
 }
