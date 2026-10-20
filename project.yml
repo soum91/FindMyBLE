@@ -20,6 +20,8 @@ targets:
     info:
       path: FindMyBLE/Info.plist
       properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: FindMyBLE
         UILaunchScreen: {}
         UIBackgroundModes: [bluetooth-central, location]
