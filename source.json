@@ -1,0 +1,41 @@
+{
+  "name": "FindMyBLE by soum91",
+  "identifier": "io.github.soum91.findmyble",
+  "subtitle": "Left-behind alerts for BLE gear",
+  "description": "Find My style tracker for Bluetooth devices like a LARQ bottle: geofenced left-behind alerts, a map of last-seen spots and Find Nearby.",
+  "iconURL": "https://raw.githubusercontent.com/soum91/FindMyBLE/main/FindMyBLE/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
+  "website": "https://github.com/soum91/FindMyBLE",
+  "sourceURL": "https://raw.githubusercontent.com/soum91/FindMyBLE/source/source.json",
+  "tintColor": "34C759",
+  "apps": [
+    {
+      "name": "FindMyBLE",
+      "bundleIdentifier": "com.soumen.findmyble",
+      "developerName": "soum91",
+      "subtitle": "Left-behind alerts for BLE gear",
+      "localizedDescription": "Find My style tracker for Bluetooth devices like a LARQ bottle: geofenced left-behind alerts, a map of last-seen spots and Find Nearby.",
+      "iconURL": "https://raw.githubusercontent.com/soum91/FindMyBLE/main/FindMyBLE/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
+      "tintColor": "34C759",
+      "category": "utilities",
+      "screenshotURLs": [],
+      "versions": [
+        {
+          "version": "1.0",
+          "buildVersion": "13",
+          "date": "2026-10-20T18:47:41Z",
+          "localizedDescription": "- Info.plist: take version and build number from MARKETING_VERSION / CURRENT_PROJECT_VERSION (8f81633)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.13/FindMyBLE-1.0-build-13.ipa",
+          "size": 425701,
+          "minOSVersion": "17.0"
+        }
+      ],
+      "version": "1.0",
+      "versionDate": "2026-10-20T18:47:41Z",
+      "versionDescription": "- Info.plist: take version and build number from MARKETING_VERSION / CURRENT_PROJECT_VERSION (8f81633)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.13/FindMyBLE-1.0-build-13.ipa",
+      "size": 425701,
+      "appPermissions": {}
+    }
+  ],
+  "news": []
+}
