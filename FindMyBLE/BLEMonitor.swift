@@ -21,6 +21,7 @@ final class BLEMonitor: NSObject, ObservableObject {
     private let holdKey = "holdConnection"
     private let powerSaveOffKey = "disablePowerSaving"
     private let leaveAreaKey = "alertOnLeaveArea"
+    private let notifyReturnsKey = "notifyReturns"
     private let lostAlertID = "ble-lost-alert"
 
     enum LinkStatus: String {
@@ -88,6 +89,12 @@ final class BLEMonitor: NSObject, ObservableObject {
         }
     }
 
+    /// Notify when the item comes back after being away. Off by default: on a napping cap this
+    /// fires constantly and is pure noise.
+    @Published var notifyReturns: Bool {
+        didSet { UserDefaults.standard.set(notifyReturns, forKey: notifyReturnsKey) }
+    }
+
     /// Radius of "the area it's in", in metres.
     private let areaRadius: Double = 150
     /// After leaving the area, how long the item may stay unheard before alerting. Gives a cap
@@ -135,6 +142,7 @@ final class BLEMonitor: NSObject, ObservableObject {
         graceSeconds = t == 0 ? 180 : t
         alertsEnabled = UserDefaults.standard.object(forKey: alertsKey) as? Bool ?? true
         alertOnLeaveArea = UserDefaults.standard.object(forKey: leaveAreaKey) as? Bool ?? true
+        notifyReturns = UserDefaults.standard.object(forKey: notifyReturnsKey) as? Bool ?? false
         holdConnection = UserDefaults.standard.object(forKey: holdKey) as? Bool ?? false
         disablePowerSaving = UserDefaults.standard.object(forKey: powerSaveOffKey) as? Bool ?? false
         watchedName = UserDefaults.standard.string(forKey: savedNameKey)
@@ -172,6 +180,11 @@ final class BLEMonitor: NSObject, ObservableObject {
     /// right now, arm a short verification: alert unless it shows up within the window.
     private func handleLeftArea() {
         guard alertsEnabled, alertOnLeaveArea, watchedName != nil else { return }
+        // Left it somewhere trusted (home, work)? That's fine, no alert. Find My does the same.
+        if let where_ = LocationRecorder.shared.area?.coordinate ?? LocationRecorder.shared.lastSeen?.coordinate,
+           TrustedPlaces.shared.contains(where_) {
+            return
+        }
         let heardJustNow = isConnected
             || (lastSighting.map { Date().timeIntervalSince($0) < 20 } ?? false)
         if heardJustNow {
@@ -327,7 +340,7 @@ final class BLEMonitor: NSObject, ObservableObject {
         let now = Date()
         let wasAway = lastSighting.map { now.timeIntervalSince($0) > graceSeconds } ?? false
 
-        if notifyBack, wasAway, alertsEnabled {
+        if notifyBack, wasAway, alertsEnabled, notifyReturns {
             let c = UNMutableNotificationContent()
             c.title = "\(watchedName ?? "Item") is back with you"
             UNUserNotificationCenter.current().add(

@@ -272,6 +272,7 @@ struct ItemDetail: View {
                 Toggle("Notify When Left Behind", isOn: $m.alertsEnabled)
                 if m.alertsEnabled {
                     Toggle("Only When I Leave the Area", isOn: $m.alertOnLeaveArea)
+                    Toggle("Notify When Back", isOn: $m.notifyReturns)
                     if !m.alertOnLeaveArea {
                         Stepper("Alert after \(Int(m.graceSeconds / 60)) min", value: $m.graceSeconds, in: 60...1800, step: 60)
                     }
@@ -501,6 +502,9 @@ struct SignalBars: View {
 struct MeTab: View {
     @ObservedObject var m = BLEMonitor.shared
     @ObservedObject var loc = LocationRecorder.shared
+    @ObservedObject var places = TrustedPlaces.shared
+    @State private var showAddPlace = false
+    @State private var newName = ""
 
     var body: some View {
         NavigationStack {
@@ -521,11 +525,43 @@ struct MeTab: View {
                     }
                 }
                 Section {
+                    ForEach(places.places) { p in
+                        HStack {
+                            Image(systemName: "mappin.circle.fill").foregroundStyle(.tint)
+                            Text(p.name)
+                            Spacer()
+                            Text("\(Int(p.radius)) m").foregroundStyle(.secondary).font(.footnote)
+                        }
+                    }
+                    .onDelete { idx in idx.map { places.places[$0] }.forEach(places.remove) }
+                    Button {
+                        newName = ""
+                        showAddPlace = true
+                    } label: {
+                        Label("Add Current Location", systemImage: "plus")
+                    }
+                    .disabled(loc.current == nil)
+                } header: {
+                    Text("Trusted Locations")
+                } footer: {
+                    Text("No left-behind alert when you leave the item at one of these. Add home and work here to stop alerts you don't want. Needs a location fix to add.")
+                }
+
+                Section {
                     Text("Don't force-quit FindMyBLE from the app switcher, or iOS stops waking it up for Bluetooth events. After a reboot, open it once.")
                         .font(.footnote).foregroundStyle(.secondary)
                 } header: { Text("Keep It Working") }
             }
             .navigationTitle("Me")
+            .alert("Name this place", isPresented: $showAddPlace) {
+                TextField("Home, Work...", text: $newName)
+                Button("Cancel", role: .cancel) {}
+                Button("Add") {
+                    if let here = loc.current { places.add(name: newName, at: here) }
+                }
+            } message: {
+                Text("Saves where you are now as a trusted spot.")
+            }
         }
     }
 
