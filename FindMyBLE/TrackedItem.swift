@@ -27,7 +27,7 @@ struct TrackedItem: Codable, Identifiable, Equatable {
     var disablePowerSaving = false
     var colorIndex = 0
 
-    static let radiusRange: ClosedRange<Double> = 50...1500
+    static var radiusRange: ClosedRange<Double> { Geofence.range }
 
     init(bluetoothName: String, matchPrefix: String, services: [String], colorIndex: Int) {
         self.bluetoothName = bluetoothName

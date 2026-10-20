@@ -18,7 +18,7 @@ struct ContentView: View {
                 // The geofence you must cross before this item's left-behind alert fires.
                 // Radius comes from the item so the ring follows the slider live.
                 if it.alertOnLeaveArea, let a = loc.area[it.id] {
-                    MapCircle(center: a.coordinate, radius: max(it.areaRadius, 50))
+                    MapCircle(center: a.coordinate, radius: Geofence.clamp(it.areaRadius))
                         .foregroundStyle(it.color.opacity(0.10))
                         .stroke(it.color.opacity(0.55), lineWidth: 1.5)
                 }
@@ -158,6 +158,7 @@ struct ItemsTab: View {
 struct ItemRow: View {
     @ObservedObject var m = BLEMonitor.shared
     @ObservedObject var loc = LocationRecorder.shared
+    @AppStorage(DistanceUnit.storageKey) private var unit: DistanceUnit = .localeDefault
     let id: UUID
 
     var body: some View {
@@ -179,8 +180,7 @@ struct ItemRow: View {
         if m.state(id).status == .connected { return nil }
         guard let fix = loc.lastSeen[id], let me = loc.current else { return nil }
         let meters = me.distance(from: CLLocation(latitude: fix.lat, longitude: fix.lon))
-        return Measurement(value: meters, unit: UnitLength.meters)
-            .formatted(.measurement(width: .abbreviated, usage: .road))
+        return unit.format(meters)
     }
 }
 
@@ -211,6 +211,7 @@ struct StatusLine: View {
 struct ItemDetail: View {
     @ObservedObject var m = BLEMonitor.shared
     @ObservedObject var loc = LocationRecorder.shared
+    @AppStorage(DistanceUnit.storageKey) private var unit: DistanceUnit = .localeDefault
     @Environment(\.dismiss) private var dismiss
     let id: UUID
     @State private var address: String?
@@ -333,7 +334,7 @@ struct ItemDetail: View {
             if let fix = loc.lastSeen[id] {
                 Section("Last Seen") {
                     LabeledContent("Time", value: fix.date.formatted(date: .abbreviated, time: .shortened))
-                    LabeledContent("Accuracy", value: "about \(Int(max(fix.accuracy, 15))) m")
+                    LabeledContent("Accuracy", value: "about \(unit.format(max(fix.accuracy, 15)))")
                 }
             }
 
@@ -375,28 +376,6 @@ struct ItemDetail: View {
         let item = MKMapItem(placemark: MKPlacemark(coordinate: fix.coordinate))
         item.name = "\(it.title) last seen"
         item.openInMaps(launchOptions: [MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking])
-    }
-}
-
-/// The item's geofence radius. The ring on the map follows it live; the real iOS region is
-/// resized once the slider settles.
-struct GeofenceSlider: View {
-    @Binding var radius: Double
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            LabeledContent("Geofence radius") {
-                Text("\(Int(radius)) m").monospacedDigit()
-            }
-            Slider(value: $radius, in: TrackedItem.radiusRange, step: 25) {
-                Text("Geofence radius")
-            } minimumValueLabel: {
-                Text("50 m").font(.caption2).foregroundStyle(.secondary)
-            } maximumValueLabel: {
-                Text("1.5 km").font(.caption2).foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 2)
     }
 }
 
@@ -599,6 +578,7 @@ struct MeTab: View {
     @State private var newName = ""
     @State private var renaming: Place?
     @State private var renameText = ""
+    @AppStorage(DistanceUnit.storageKey) private var unit: DistanceUnit = .localeDefault
 
     var body: some View {
         NavigationStack {
@@ -625,10 +605,9 @@ struct MeTab: View {
                                 Image(systemName: "mappin.circle.fill").foregroundStyle(.tint)
                                 Text(p.name)
                                 Spacer()
-                                Text(DiameterStepper.format(p.radius * 2)).foregroundStyle(.secondary).font(.footnote)
                             }
-                            DiameterStepper(title: "Size", radius: Binding(
-                                get: { p.radius },
+                            GeofenceSlider(title: "Radius", radius: Binding(
+                                get: { places.places.first { $0.id == p.id }?.radius ?? p.radius },
                                 set: { places.setRadius(p, $0) }))
                                 .font(.subheadline)
                             Picker("", selection: Binding(
@@ -658,6 +637,17 @@ struct MeTab: View {
                     Text("Trusted Locations")
                 } footer: {
                     Text("Remind me: get a nudge if you leave this place without the item (set home to this). Ignore: never alert here, you leave it on purpose. Needs location Always.")
+                }
+
+                Section {
+                    Picker("Distance", selection: $unit) {
+                        ForEach(DistanceUnit.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("Units")
+                } footer: {
+                    Text("Only changes how distances are shown. Small rings (under about 100 m or 330 ft) are allowed, but iOS geofencing is coarse, so expect the alert to fire a bit further out than the ring.")
                 }
 
                 Section {
@@ -695,35 +685,6 @@ struct MeTab: View {
         case .denied, .restricted: return "Denied"
         default: return "Not Set"
         }
-    }
-}
-
-// MARK: Geofence size
-
-/// Edits a geofence as a diameter (what you'd pace out) while the model keeps a radius.
-/// iOS won't monitor regions under ~100 m across, so that's the floor.
-struct DiameterStepper: View {
-    let title: String
-    @Binding var radius: Double
-
-    static let range: ClosedRange<Double> = 100...3000
-
-    var body: some View {
-        Stepper(value: Binding(
-            get: { radius * 2 },
-            set: { radius = min(max($0, Self.range.lowerBound), Self.range.upperBound) / 2 }),
-                in: Self.range, step: step) {
-            LabeledContent(title) { Text(Self.format(radius * 2)) }
-        }
-    }
-
-    /// Fine steps when small, coarse when big, so you're not tapping forever.
-    private var step: Double { radius * 2 < 500 ? 50 : radius * 2 < 1000 ? 100 : 250 }
-
-    static func format(_ diameter: Double) -> String {
-        diameter >= 1000
-            ? String(format: "%.1f km across", diameter / 1000).replacingOccurrences(of: ".0 ", with: " ")
-            : "\(Int(diameter)) m across"
     }
 }
 

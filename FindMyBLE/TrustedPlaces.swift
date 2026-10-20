@@ -49,10 +49,10 @@ final class TrustedPlaces: ObservableObject {
         changed()
     }
 
-    /// Geofence size for this place. Stored as a radius; the UI edits it as a diameter.
+    /// Geofence radius for this place, metres.
     func setRadius(_ p: Place, _ radius: Double) {
         guard let i = places.firstIndex(where: { $0.id == p.id }) else { return }
-        places[i].radius = radius
+        places[i].radius = Geofence.clamp(radius)
         changed()
     }
 
@@ -72,8 +72,17 @@ final class TrustedPlaces: ObservableObject {
         }
     }
 
+    private var pendingSync: DispatchWorkItem?
+
     private func changed() {
         if let d = try? JSONEncoder().encode(places) { UserDefaults.standard.set(d, forKey: key) }
-        LocationRecorder.shared.syncPlaceRegions(places)
+        // The radius slider fires continuously; re-register regions with iOS once it settles.
+        pendingSync?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            LocationRecorder.shared.syncPlaceRegions(self.places)
+        }
+        pendingSync = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
     }
 }

@@ -49,7 +49,12 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     private var pendingExits: [String: (center: CLLocationCoordinate2D, radius: Double)] = [:]
 
     /// How far beyond the radius, with a trustworthy fix, before we believe you actually left.
+    /// Scales down for small rings (so a 10 m ring isn't really a 130 m one), but never below
+    /// the fix's own error, so GPS wobble indoors can't fake an exit.
     private let exitMargin: Double = 120
+    private func margin(for radius: Double, accuracy: Double) -> Double {
+        max(min(exitMargin, max(20, radius)), accuracy)
+    }
     private let maxTrustedAccuracy: Double = 65
 
     private override init() {
@@ -183,7 +188,7 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         manager.startMonitoring(for: region)
     }
 
-    private func clamp(_ r: Double) -> Double { min(max(r, 50), manager.maximumRegionMonitoringDistance) }
+    private func clamp(_ r: Double) -> Double { min(max(r, Geofence.range.lowerBound), manager.maximumRegionMonitoringDistance) }
     private func regionID(_ id: UUID) -> String { itemPrefix + id.uuidString }
     private func itemID(_ regionID: String) -> UUID? {
         guard regionID.hasPrefix(itemPrefix) else { return nil }
@@ -271,7 +276,7 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         let trustworthy = loc.horizontalAccuracy > 0 && loc.horizontalAccuracy <= maxTrustedAccuracy
         for (rid, e) in exits {
             let d = loc.distance(from: CLLocation(latitude: e.center.latitude, longitude: e.center.longitude))
-            let left = trustworthy && d > e.radius + exitMargin
+            let left = trustworthy && d > e.radius + margin(for: e.radius, accuracy: loc.horizontalAccuracy)
             if let id = itemID(rid) {
                 if left { onLeftArea?(id) }
                 else { startRegion(id, center: e.center, radius: e.radius) }  // drift: re-arm
