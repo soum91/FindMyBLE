@@ -21,6 +21,15 @@
       "versions": [
         {
           "version": "1.0",
+          "buildVersion": "17",
+          "date": "2026-10-20T20:03:41Z",
+          "localizedDescription": "- Editable geofence size and a display name for the item (18b6659)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.17/FindMyBLE-1.0-build-17.ipa",
+          "size": 472004,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "1.0",
           "buildVersion": "16",
           "date": "2026-10-20T19:10:41Z",
           "localizedDescription": "- Trusted places get a mode: remind if you leave without the item (528186b)",
@@ -57,10 +66,10 @@
         }
       ],
       "version": "1.0",
-      "versionDate": "2026-10-20T19:10:41Z",
-      "versionDescription": "- Trusted places get a mode: remind if you leave without the item (528186b)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.16/FindMyBLE-1.0-build-16.ipa",
-      "size": 455572,
+      "versionDate": "2026-10-20T20:03:41Z",
+      "versionDescription": "- Editable geofence size and a display name for the item (18b6659)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.17/FindMyBLE-1.0-build-17.ipa",
+      "size": 472004,
       "appPermissions": {}
     }
   ],
