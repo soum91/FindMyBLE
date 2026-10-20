@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.18",
+          "buildVersion": "18",
+          "date": "2026-10-20T20:21:53Z",
+          "localizedDescription": "- CI: version string carries the build number (<version>.<build>) (a0aa730)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.18/FindMyBLE-1.0-build-18.ipa",
+          "size": 472003,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0",
           "buildVersion": "17",
           "date": "2026-10-20T20:03:41Z",
@@ -65,11 +74,11 @@
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0",
-      "versionDate": "2026-10-20T20:03:41Z",
-      "versionDescription": "- Editable geofence size and a display name for the item (18b6659)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.17/FindMyBLE-1.0-build-17.ipa",
-      "size": 472004,
+      "version": "1.0.18",
+      "versionDate": "2026-10-20T20:21:53Z",
+      "versionDescription": "- CI: version string carries the build number (<version>.<build>) (a0aa730)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.18/FindMyBLE-1.0-build-18.ipa",
+      "size": 472003,
       "appPermissions": {}
     }
   ],
