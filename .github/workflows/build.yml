@@ -8,11 +8,18 @@ on:
 permissions:
   contents: write
 
+env:
+  APP: FindMyBLE
+  BUILD: ${{ github.run_number }}
+  TAG: v1.0.${{ github.run_number }}
+
 jobs:
   build:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -26,26 +33,37 @@ jobs:
             -configuration Release -sdk iphoneos \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=$BUILD \
             build
 
       - name: Package IPA
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/FindMyBLE.app Payload/
-          zip -qr FindMyBLE-unsigned.ipa Payload
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" Payload/FindMyBLE.app/Info.plist
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Payload/FindMyBLE.app/Info.plist)
+          IPA="$APP-$VERSION-build-$BUILD.ipa"
+          zip -qr "$IPA" Payload
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "IPA=$IPA" >> "$GITHUB_ENV"
+
+      - name: Changelog
+        run: |
+          .github/scripts/release-notes.sh "$APP" "$VERSION" "$BUILD" 'v1.0.*' "$TAG" \
+            "Unsigned IPA. Install with Sideloadly, AltStore or TrollStore." > release-notes.md
+          cat release-notes.md
 
       - uses: actions/upload-artifact@v4
         with:
-          name: FindMyBLE-unsigned-ipa
-          path: FindMyBLE-unsigned.ipa
+          name: ${{ env.APP }}-build-${{ env.BUILD }}-ipa
+          path: ${{ env.IPA }}
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: FindMyBLE v1.0.${{ github.run_number }}
-          body: |
-            Unsigned build of ${{ github.sha }}.
-            Install FindMyBLE-unsigned.ipa with Sideloadly, AltStore or TrollStore.
-          files: FindMyBLE-unsigned.ipa
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          name: FindMyBLE v1.0.${{ env.BUILD }} (build ${{ env.BUILD }})
+          body_path: release-notes.md
+          files: ${{ env.IPA }}
           make_latest: true

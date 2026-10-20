@@ -1,0 +1,25 @@
+name: Backfill release build numbers and changelogs
+
+# One-off. Run it from the Actions tab: renames the IPA on every existing
+# release to <App>-<version>-build-<N>.ipa and writes a changelog into each
+# release's notes. Safe to run again. Delete this file once it has run.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      APP: FindMyBLE
+      TITLE_STYLE: v1.0
+      INSTALL: Unsigned IPA. Install with Sideloadly, AltStore or TrollStore.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: python3 .github/scripts/backfill-releases.py
