@@ -1,0 +1,13 @@
+{
+  "name": "FindMyBLE",
+  "sourceName": "FindMyBLE by soum91",
+  "sourceIdentifier": "io.github.soum91.findmyble",
+  "subtitle": "Left-behind alerts for BLE gear",
+  "description": "Find My style tracker for Bluetooth devices like a LARQ bottle: geofenced left-behind alerts, a map of last-seen spots and Find Nearby.",
+  "developerName": "soum91",
+  "iconURL": "https://raw.githubusercontent.com/soum91/FindMyBLE/main/FindMyBLE/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
+  "tintColor": "34C759",
+  "category": "utilities",
+  "website": "https://github.com/soum91/FindMyBLE",
+  "sourceURL": "https://raw.githubusercontent.com/soum91/FindMyBLE/source/source.json"
+}
