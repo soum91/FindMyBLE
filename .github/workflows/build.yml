@@ -42,6 +42,8 @@ jobs:
           cp -R build/Build/Products/Release-iphoneos/FindMyBLE.app Payload/
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" Payload/FindMyBLE.app/Info.plist
           VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Payload/FindMyBLE.app/Info.plist)
+          # Sideloaders (FlareStore etc.) only compare the version string, so make it <version>.<build>.
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION.$BUILD" Payload/FindMyBLE.app/Info.plist
           IPA="$APP-$VERSION-build-$BUILD.ipa"
           zip -qr "$IPA" Payload
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
