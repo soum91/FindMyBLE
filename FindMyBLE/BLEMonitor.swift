@@ -171,18 +171,30 @@ final class BLEMonitor: NSObject, ObservableObject {
         }
 
         LocationRecorder.shared.onLeftArea = { [weak self] in self?.handleLeftArea() }
+        LocationRecorder.shared.onLeftPlace = { [weak self] p in self?.handleLeftPlace(p) }
         if watchedName != nil, alertOnLeaveArea {
             LocationRecorder.shared.armGeofence(radius: areaRadius)
         }
+        LocationRecorder.shared.syncPlaceRegions(TrustedPlaces.shared.places)
+    }
+
+    /// Left a trusted place set to "remind". If the item didn't come with you, nudge you to grab it.
+    private func handleLeftPlace(_ p: Place) {
+        guard alertsEnabled, p.mode == .remind, watchedName != nil else { return }
+        let withMe = isConnected || (lastSighting.map { Date().timeIntervalSince($0) < 90 } ?? false)
+        if withMe { return }
+        scheduleLostAlert(after: verifySeconds,
+                          body: "You left \(p.name) without \(watchedName ?? "your item"). Grab it?")
     }
 
     /// The phone left the area where the item was last heard. If we don't clearly have the item
     /// right now, arm a short verification: alert unless it shows up within the window.
     private func handleLeftArea() {
         guard alertsEnabled, alertOnLeaveArea, watchedName != nil else { return }
-        // Left it somewhere trusted (home, work)? That's fine, no alert. Find My does the same.
+        // Item is sitting in a trusted place? The place's own leave logic owns it, so the generic
+        // item-geofence stays quiet to avoid double alerts (and to honour "ignore" places).
         if let where_ = LocationRecorder.shared.area?.coordinate ?? LocationRecorder.shared.lastSeen?.coordinate,
-           TrustedPlaces.shared.contains(where_) {
+           TrustedPlaces.shared.containing(where_) != nil {
             return
         }
         let heardJustNow = isConnected

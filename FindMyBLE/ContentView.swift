@@ -526,11 +526,20 @@ struct MeTab: View {
                 }
                 Section {
                     ForEach(places.places) { p in
-                        HStack {
-                            Image(systemName: "mappin.circle.fill").foregroundStyle(.tint)
-                            Text(p.name)
-                            Spacer()
-                            Text("\(Int(p.radius)) m").foregroundStyle(.secondary).font(.footnote)
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Image(systemName: "mappin.circle.fill").foregroundStyle(.tint)
+                                Text(p.name)
+                                Spacer()
+                                Text("\(Int(p.radius)) m").foregroundStyle(.secondary).font(.footnote)
+                            }
+                            Picker("", selection: Binding(
+                                get: { p.mode },
+                                set: { places.setMode(p, $0) })) {
+                                Text("Remind me").tag(PlaceMode.remind)
+                                Text("Ignore").tag(PlaceMode.ignore)
+                            }
+                            .pickerStyle(.segmented)
                         }
                     }
                     .onDelete { idx in idx.map { places.places[$0] }.forEach(places.remove) }
@@ -544,7 +553,7 @@ struct MeTab: View {
                 } header: {
                     Text("Trusted Locations")
                 } footer: {
-                    Text("No left-behind alert when you leave the item at one of these. Add home and work here to stop alerts you don't want. Needs a location fix to add.")
+                    Text("Remind me: get a nudge if you leave this place without the item (set home to this). Ignore: never alert here, you leave it on purpose. Needs location Always.")
                 }
 
                 Section {
@@ -557,7 +566,7 @@ struct MeTab: View {
                 TextField("Home, Work...", text: $newName)
                 Button("Cancel", role: .cancel) {}
                 Button("Add") {
-                    if let here = loc.current { places.add(name: newName, at: here) }
+                    if let here = loc.current { places.add(name: newName, at: here, mode: .remind) }
                 }
             } message: {
                 Text("Saves where you are now as a trusted spot.")
