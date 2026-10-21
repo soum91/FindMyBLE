@@ -26,7 +26,7 @@ struct ContentView: View {
             ForEach(m.items) { it in
                 if let fix = loc.lastSeen[it.id] {
                     Annotation(it.title, coordinate: fix.coordinate, anchor: .bottom) {
-                        ItemPin(color: it.color)
+                        ItemPin(kind: it.iconKind, colorIndex: it.colorIndex)
                     }
                 }
             }
@@ -36,6 +36,11 @@ struct ContentView: View {
             MapCompass()
         }
         .onAppear { loc.requestPermission() }
+        // Tapping the item widget opens here with the map on that item.
+        .onOpenURL { url in
+            guard url.scheme == "findmyble", let id = UUID(uuidString: url.lastPathComponent) else { return }
+            focus(id)
+        }
         .sheet(isPresented: .constant(true)) {
             SheetRoot(focus: focus)
                 .presentationDetents([.height(110), .fraction(0.4), .large], selection: $detent)
@@ -64,13 +69,13 @@ struct ContentView: View {
 // MARK: - Map pin
 
 struct ItemPin: View {
-    let color: Color
+    let kind: ItemIconKind
+    let colorIndex: Int
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
                 Circle().fill(.white).frame(width: 46, height: 46).shadow(radius: 3)
-                Circle().fill(color.gradient).frame(width: 38, height: 38)
-                Image(systemName: "drop.fill").foregroundStyle(.white).font(.system(size: 18, weight: .semibold))
+                ItemBadge(kind: kind, colorIndex: colorIndex, size: 38)
             }
             Triangle().fill(.white).frame(width: 12, height: 8).shadow(radius: 1)
         }
@@ -85,18 +90,6 @@ struct Triangle: Shape {
             p.addLine(to: .init(x: r.midX, y: r.maxY))
             p.closeSubpath()
         }
-    }
-}
-
-struct ItemIcon: View {
-    var color: Color = ItemPalette.color(0)
-    var size: CGFloat = 40
-    var body: some View {
-        ZStack {
-            Circle().fill(color.gradient)
-            Image(systemName: "drop.fill").foregroundStyle(.white).font(.system(size: size * 0.45, weight: .semibold))
-        }
-        .frame(width: size, height: size)
     }
 }
 
@@ -124,9 +117,11 @@ struct ItemsTab: View {
     var body: some View {
         NavigationStack {
             List {
+                WaterCard()
+                    .listRowSeparator(.hidden)
                 if m.items.isEmpty {
                     VStack(spacing: 10) {
-                        ItemIcon(size: 56)
+                        ItemBadge(kind: .bottle, colorIndex: 0, size: 56)
                         Text("No Items").font(.headline)
                         Text("Add your bottle or any Bluetooth device to get alerted when you leave it behind.")
                             .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -164,16 +159,23 @@ struct ItemRow: View {
     var body: some View {
         if let it = m.item(id) {
             HStack(spacing: 12) {
-                ItemIcon(color: it.color)
+                ItemBadge(kind: it.iconKind, colorIndex: it.colorIndex)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(it.title).font(.headline)
                     StatusLine(id: id).font(.subheadline).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if let d = distanceText { Text(d).font(.subheadline).foregroundStyle(.secondary) }
+                VStack(alignment: .trailing, spacing: 2) {
+                    if let d = distanceText { Text(d).font(.subheadline).foregroundStyle(.secondary) }
+                    if let b = battery { BatteryLabel(level: b.level, stale: !m.state(id).isConnected).font(.caption) }
+                }
             }
             .padding(.vertical, 4)
         }
+    }
+
+    private var battery: BatteryReading? {
+        m.state(id).battery.map { BatteryReading(level: $0, at: .now) } ?? m.lastBattery[id]
     }
 
     private var distanceText: String? {
@@ -270,6 +272,18 @@ struct ItemDetail: View {
                         .multilineTextAlignment(.trailing)
                         .submitLabel(.done)
                 }
+                Picker("Icon", selection: Binding(
+                    get: { it.iconKind },
+                    set: { k in m.update(id) { $0.icon = k } })) {
+                    ForEach(ItemIconKind.allCases) { k in
+                        Label {
+                            Text(k.label)
+                        } icon: {
+                            ItemBadge(kind: k, colorIndex: it.colorIndex, size: 22)
+                        }
+                        .tag(k)
+                    }
+                }
                 LabeledContent("Bluetooth name") {
                     Text(it.bluetoothName).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
@@ -294,10 +308,19 @@ struct ItemDetail: View {
             }
 
             Section {
+                if let b = s.battery {
+                    LabeledContent("Battery") { BatteryLabel(level: b) }
+                } else if let r = m.lastBattery[id] {
+                    LabeledContent("Battery") {
+                        HStack(spacing: 6) {
+                            Text(r.at, style: .relative).font(.caption).foregroundStyle(.secondary)
+                            BatteryLabel(level: r.level, stale: true)
+                        }
+                    }
+                }
                 Toggle("Keep Connected", isOn: m.binding(id, \.holdConnection, default: false))
                 if it.holdConnection {
                     LabeledContent("Link") { Text(s.isConnected ? "Connected" : "Reconnecting...") }
-                    if let b = s.battery { LabeledContent("Battery") { Text("\(b)%") } }
                     if it.looksLikeLarq {
                         Toggle("Stop Cap Power-Saving", isOn: m.binding(id, \.disablePowerSaving, default: false))
                     }
@@ -639,16 +662,20 @@ struct MeTab: View {
                     Text("Remind me: get a nudge if you leave this place without the item (set home to this). Ignore: never alert here, you leave it on purpose. Needs location Always.")
                 }
 
+                WaterSettings()
+
                 Section {
-                    Picker("Distance", selection: $unit) {
+                    Picker("Units", selection: $unit) {
                         ForEach(DistanceUnit.allCases) { Text($0.label).tag($0) }
                     }
                     .pickerStyle(.segmented)
                 } header: {
                     Text("Units")
                 } footer: {
-                    Text("Only changes how distances are shown. Small rings (under about 100 m or 330 ft) are allowed, but iOS geofencing is coarse, so expect the alert to fire a bit further out than the ring.")
+                    Text("Only changes how distances and water are shown. Small rings (under about 100 m or 330 ft) are allowed, but iOS geofencing is coarse, so expect the alert to fire a bit further out than the ring.")
                 }
+
+                WidgetDiagnostics()
 
                 Section {
                     Text("Don't force-quit FindMyBLE from the app switcher, or iOS stops waking it up for Bluetooth events. After a reboot, open it once.")

@@ -7,7 +7,9 @@ targets:
   FindMyBLE:
     type: application
     platform: iOS
-    sources: [FindMyBLE]
+    sources: [FindMyBLE, Shared]
+    dependencies:
+      - target: FindMyBLEWidget
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.soumen.findmyble
@@ -17,6 +19,10 @@ targets:
         SWIFT_VERSION: "5.0"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    entitlements:
+      path: FindMyBLE/FindMyBLE.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.soumen.findmyble]
     info:
       path: FindMyBLE/Info.plist
       properties:
@@ -29,3 +35,30 @@ targets:
         NSLocationWhenInUseUsageDescription: Saves where your item was when it disconnected.
         NSLocationAlwaysAndWhenInUseUsageDescription: Saves where your item was when it disconnected, even when the app is in the background.
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        CFBundleURLTypes:
+          - CFBundleURLName: com.soumen.findmyble
+            CFBundleURLSchemes: [findmyble]
+  FindMyBLEWidget:
+    type: app-extension
+    platform: iOS
+    sources: [FindMyBLEWidget, Shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.soumen.findmyble.widget
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.0"
+        SKIP_INSTALL: YES
+    entitlements:
+      path: FindMyBLEWidget/FindMyBLEWidget.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.soumen.findmyble]
+    info:
+      path: FindMyBLEWidget/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDisplayName: FindMyBLE
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension

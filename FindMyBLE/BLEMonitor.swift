@@ -15,6 +15,8 @@ final class BLEMonitor: NSObject, ObservableObject {
     private let itemsKey = "trackedItems.v2"
     private let sightingsKey = "lastSightings.v2"
     private let heldKey = "heldPeripherals.v2"
+    private let knownKey = "knownPeripherals.v2"
+    private let batteryKey = "lastBattery.v2"
     private let legacyAlertID = "ble-lost-alert"
 
     struct Device: Identifiable {
@@ -31,6 +33,8 @@ final class BLEMonitor: NSObject, ObservableObject {
     @Published var isScanning = false
     @Published private(set) var items: [TrackedItem] = []
     @Published private(set) var live: [UUID: ItemLive] = [:]
+    /// Last battery reading per item, kept after the link drops so the list and widget still show it.
+    @Published private(set) var lastBattery: [UUID: BatteryReading] = [:]
 
     private var central: CBCentralManager!
     private var lastScanRestart = Date.distantPast
@@ -42,6 +46,10 @@ final class BLEMonitor: NSObject, ObservableObject {
     private var held: [UUID: CBPeripheral] = [:]
     /// Last peripheral that matched each item, so the finder can connect on demand.
     private var lastPeripheral: [UUID: CBPeripheral] = [:]
+    /// The peripheral identifier each item last matched, persisted. Lets us ask iOS for a pending
+    /// connection at launch: iOS then reconnects on its own when the item is in range and wakes
+    /// the app, even while it is suspended. That is what keeps Keep Connected alive in the background.
+    private var knownPeripheral: [UUID: UUID] = [:]
     private var uartWrite: [UUID: CBCharacteristic] = [:]
     /// Item whose Find Nearby screen is open: connect and poll signal fast, then let go.
     private var finding: UUID?
@@ -60,6 +68,7 @@ final class BLEMonitor: NSObject, ObservableObject {
     private override init() {
         super.init()
         loadItems()
+        loadDeviceMemory()
 
         UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
@@ -139,7 +148,7 @@ final class BLEMonitor: NSObject, ObservableObject {
         }
         if new.holdConnection != old.holdConnection {
             if new.holdConnection {
-                if let p = lastPeripheral[id] { connectIfNeeded(id, p) }
+                if let p = lastPeripheral[id] { connectIfNeeded(id, p) } else { reconnectKnown() }
                 updateScan(force: true)
             } else if finding != id {
                 dropConnection(id)
@@ -183,6 +192,10 @@ final class BLEMonitor: NSObject, ObservableObject {
         items.removeAll { $0.id == id }
         live[id] = nil
         lastPeripheral[id] = nil
+        knownPeripheral[id] = nil
+        lastBattery[id] = nil
+        saveDeviceMemory()
+        WidgetBridge.shared.forget(id)
         lastAreaArm[id] = nil
         lastTimerArm[id] = nil
         saveItems()
@@ -208,6 +221,7 @@ final class BLEMonitor: NSObject, ObservableObject {
         connectedPoll?.invalidate()
         connectedPoll = nil
         updateScan(force: true)
+        reconnectKnown()   // Add Item held off on connecting; pick the links back up
     }
 
     /// A connected peripheral stops advertising, so a scan alone never shows it. This is why a
@@ -266,6 +280,37 @@ final class BLEMonitor: NSObject, ObservableObject {
         held[id] = p
         p.delegate = self
         saveHeld()
+        remember(id, p)
+    }
+
+    private func remember(_ id: UUID, _ p: CBPeripheral) {
+        guard knownPeripheral[id] != p.identifier else { return }
+        knownPeripheral[id] = p.identifier
+        saveDeviceMemory()
+    }
+
+    /// For every Keep Connected item without a live link: reclaim one iOS already has open (this
+    /// app's or the LARQ app's), else queue a pending connect to its last-known peripheral.
+    /// Pending connects never time out, so this keeps working while the app is suspended.
+    /// If the device has since changed address, advertisements pick it up instead.
+    private func reconnectKnown() {
+        guard central.state == .poweredOn, !isScanning else { return }
+        let want = items.filter { $0.holdConnection && (held[$0.id] == nil || held[$0.id]?.state == .disconnected) }
+        guard !want.isEmpty else { return }
+        let svc = Array(Set(Larq.allServices + want.flatMap(\.serviceUUIDs)))
+        let open = central.retrieveConnectedPeripherals(withServices: svc)
+        for it in want {
+            if let p = open.first(where: { p in
+                p.identifier == knownPeripheral[it.id] || (p.name.map(it.matches) ?? false)
+            }) {
+                lastPeripheral[it.id] = p
+                connectIfNeeded(it.id, p)
+            } else if let pid = knownPeripheral[it.id],
+                      let p = central.retrievePeripherals(withIdentifiers: [pid]).first {
+                lastPeripheral[it.id] = p
+                connectIfNeeded(it.id, p)
+            }
+        }
     }
 
     private func connectIfNeeded(_ id: UUID, _ p: CBPeripheral) {
@@ -494,6 +539,25 @@ final class BLEMonitor: NSObject, ObservableObject {
                                   forKey: heldKey)
     }
 
+    private func saveDeviceMemory() {
+        let ud = UserDefaults.standard
+        ud.set(knownPeripheral.reduce(into: [String: String]()) { $0[$1.key.uuidString] = $1.value.uuidString }, forKey: knownKey)
+        if let d = try? JSONEncoder().encode(Dictionary(uniqueKeysWithValues: lastBattery.map { ($0.key.uuidString, $0.value) })) {
+            ud.set(d, forKey: batteryKey)
+        }
+    }
+
+    private func loadDeviceMemory() {
+        let ud = UserDefaults.standard
+        for (k, v) in ud.dictionary(forKey: knownKey) as? [String: String] ?? [:] {
+            if let id = UUID(uuidString: k), let pid = UUID(uuidString: v) { knownPeripheral[id] = pid }
+        }
+        if let d = ud.data(forKey: batteryKey),
+           let b = try? JSONDecoder().decode([String: BatteryReading].self, from: d) {
+            for (k, v) in b { if let id = UUID(uuidString: k) { lastBattery[id] = v } }
+        }
+    }
+
     private func loadItems() {
         let ud = UserDefaults.standard
         if let d = ud.data(forKey: itemsKey), let saved = try? JSONDecoder().decode([TrackedItem].self, from: d) {
@@ -551,7 +615,10 @@ extension BLEMonitor: CBCentralManagerDelegate {
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         btState = central.state
-        if central.state == .poweredOn { updateScan(force: true) }
+        if central.state == .poweredOn {
+            updateScan(force: true)
+            reconnectKnown()
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) {
@@ -616,6 +683,7 @@ extension BLEMonitor: CBCentralManagerDelegate {
         if let name {
             for id in owners(of: name, p) {
                 lastPeripheral[id] = p
+                remember(id, p)
                 sighted(id, rssi: r)
                 connectIfNeeded(id, p)
                 if finding == id, held[id] == nil { beginFinding(id) }
@@ -669,7 +737,11 @@ extension BLEMonitor: CBPeripheralDelegate {
 
     func peripheral(_ p: CBPeripheral, didUpdateValueFor c: CBCharacteristic, error: Error?) {
         guard error == nil, let data = c.value, let id = itemID(for: p) else { return }
-        if c.uuid == Larq.batteryLevel, let b = data.first { live[id]?.battery = Int(b) }
+        if c.uuid == Larq.batteryLevel, let b = data.first, b <= 100 {
+            live[id]?.battery = Int(b)
+            lastBattery[id] = BatteryReading(level: Int(b), at: .now)
+            saveDeviceMemory()
+        }
     }
 }
 

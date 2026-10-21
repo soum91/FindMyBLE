@@ -44,6 +44,15 @@ jobs:
           VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Payload/FindMyBLE.app/Info.plist)
           # Sideloaders (FlareStore etc.) only compare the version string, so make it <version>.<build>.
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION.$BUILD" Payload/FindMyBLE.app/Info.plist
+          # Widget extension: same build and version as the app, or iOS refuses to install it.
+          WIDGET=Payload/FindMyBLE.app/PlugIns/FindMyBLEWidget.appex
+          test -d "$WIDGET"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" "$WIDGET/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION.$BUILD" "$WIDGET/Info.plist"
+          # Ad-hoc sign with the App Group entitlement so AltStore/Sideloadly keep it and the widget can read the app's data.
+          codesign --force --sign - --timestamp=none --entitlements FindMyBLEWidget/FindMyBLEWidget.entitlements "$WIDGET"
+          codesign --force --sign - --timestamp=none --entitlements FindMyBLE/FindMyBLE.entitlements Payload/FindMyBLE.app
+          codesign -d --entitlements - "$WIDGET" || true
           IPA="$APP-$VERSION-build-$BUILD.ipa"
           zip -qr "$IPA" Payload
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
@@ -52,7 +61,7 @@ jobs:
       - name: Changelog
         run: |
           .github/scripts/release-notes.sh "$APP" "$VERSION" "$BUILD" 'v1.0.*' "$TAG" \
-            "Unsigned IPA. Install with Sideloadly, AltStore or TrollStore." > release-notes.md
+            "Unsigned IPA. Install with Sideloadly, AltStore or TrollStore. Keep app extensions on so the widget comes along." > release-notes.md
           cat release-notes.md
 
       - uses: actions/upload-artifact@v4

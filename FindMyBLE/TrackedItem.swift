@@ -26,6 +26,8 @@ struct TrackedItem: Codable, Identifiable, Equatable {
     var holdConnection = false
     var disablePowerSaving = false
     var colorIndex = 0
+    /// Nil means "pick from the device": a bottle for LARQ, a tag for anything else.
+    var icon: ItemIconKind?
 
     static var radiusRange: ClosedRange<Double> { Geofence.range }
 
@@ -50,6 +52,7 @@ struct TrackedItem: Codable, Identifiable, Equatable {
     var backgroundCapable: Bool { !services.isEmpty }
     var looksLikeLarq: Bool { matchPrefix.uppercased().hasPrefix("LARQ") }
     var color: Color { ItemPalette.color(colorIndex) }
+    var iconKind: ItemIconKind { icon ?? (looksLikeLarq ? .bottle : .tag) }
 
     func matches(_ name: String) -> Bool {
         let p = matchPrefix.trimmingCharacters(in: .whitespaces)
@@ -60,7 +63,7 @@ struct TrackedItem: Codable, Identifiable, Equatable {
     // Tolerant decoding, so adding a field later never wipes saved items.
     private enum CodingKeys: String, CodingKey {
         case id, bluetoothName, displayName, matchPrefix, services, alertsEnabled, alertOnLeaveArea,
-             notifyReturns, graceSeconds, areaRadius, holdConnection, disablePowerSaving, colorIndex
+             notifyReturns, graceSeconds, areaRadius, holdConnection, disablePowerSaving, colorIndex, icon
     }
 
     init(from d: Decoder) throws {
@@ -78,6 +81,7 @@ struct TrackedItem: Codable, Identifiable, Equatable {
         holdConnection = try c.decodeIfPresent(Bool.self, forKey: .holdConnection) ?? false
         disablePowerSaving = try c.decodeIfPresent(Bool.self, forKey: .disablePowerSaving) ?? false
         colorIndex = try c.decodeIfPresent(Int.self, forKey: .colorIndex) ?? 0
+        icon = try? c.decodeIfPresent(ItemIconKind.self, forKey: .icon)
     }
 }
 
@@ -90,25 +94,12 @@ struct ItemLive: Equatable {
     var lastSighting: Date?
     /// When it was last heard, once status is .lost.
     var lastLost: Date?
+    /// Battery while connected. The last reading is kept separately (BLEMonitor.lastBattery).
     var battery: Int?
     var isConnected = false
 }
 
-enum LinkStatus: String {
-    case idle = "Not watching"
-    case connecting = "Searching..."
-    case connected = "With You"
-    case lost = "LOST"
-}
-
-enum ItemPalette {
-    static let colors: [Color] = [
-        Color(red: 0.04, green: 0.45, blue: 0.85),
-        Color(red: 0.95, green: 0.50, blue: 0.10),
-        Color(red: 0.55, green: 0.30, blue: 0.85),
-        Color(red: 0.15, green: 0.65, blue: 0.35),
-        Color(red: 0.90, green: 0.25, blue: 0.45),
-        Color(red: 0.10, green: 0.65, blue: 0.70),
-    ]
-    static func color(_ i: Int) -> Color { colors[((i % colors.count) + colors.count) % colors.count] }
+struct BatteryReading: Codable, Equatable {
+    var level: Int
+    var at: Date
 }
