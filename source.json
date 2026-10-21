@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.21",
+          "buildVersion": "21",
+          "date": "2026-10-21T03:18:42Z",
+          "localizedDescription": "- Widgets, water log, battery labels, bottle icon, stronger background link (b30a69d)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.21/FindMyBLE-1.0-build-21.ipa",
+          "size": 913965,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.20",
           "buildVersion": "20",
           "date": "2026-10-20T20:41:38Z",
@@ -92,11 +101,11 @@
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.20",
-      "versionDate": "2026-10-20T20:41:38Z",
-      "versionDescription": "- Geofence and trusted places down to 10 m, metres/feet setting (ed3e473)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.20/FindMyBLE-1.0-build-20.ipa",
-      "size": 556975,
+      "version": "1.0.21",
+      "versionDate": "2026-10-21T03:18:42Z",
+      "versionDescription": "- Widgets, water log, battery labels, bottle icon, stronger background link (b30a69d)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.21/FindMyBLE-1.0-build-21.ipa",
+      "size": 913965,
       "appPermissions": {}
     }
   ],
