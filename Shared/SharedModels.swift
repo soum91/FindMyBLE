@@ -209,6 +209,12 @@ struct SharedSnapshot: Codable {
     var distanceUnit: DistanceUnit { DistanceUnit(rawValue: unit) ?? .localeDefault }
 }
 
+/// Map pictures of each item's last-seen spot, rendered by the app (MapKit is too heavy for the
+/// widget's ~30 MB limit) and only loaded by the widget.
+enum MapFiles {
+    static func name(_ id: UUID, dark: Bool) -> String { "map-\(id.uuidString)-\(dark ? "dark" : "light").jpg" }
+}
+
 enum WidgetKinds {
     static let item = "FindMyBLE.item"
     static let water = "FindMyBLE.water"

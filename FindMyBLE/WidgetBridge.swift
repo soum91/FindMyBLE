@@ -3,6 +3,7 @@ import CoreLocation
 import WidgetKit
 import Combine
 import UIKit
+import MapKit
 
 /// Feeds the widget. Writes a small snapshot into the App Group whenever something the widget
 /// shows changes, and asks WidgetKit to redraw.
@@ -17,6 +18,10 @@ final class WidgetBridge {
 
     private let geocoder = CLGeocoder()
     private var places: [UUID: (lat: Double, lon: Double, name: String)] = [:]
+    /// Where each item's saved map picture is centred, so it's only re-rendered when the spot moves.
+    private var mapStamps: [UUID: (lat: Double, lon: Double)] = [:]
+    private let mapStampsKey = "widgetMapStamps"
+    private var renderingMap = false
     private let placesKey = "widgetPlaceNames"
     private var geocoding = false
     private var pending: DispatchWorkItem?
@@ -25,6 +30,9 @@ final class WidgetBridge {
     private var bag: Set<AnyCancellable> = []
 
     private init() {
+        for (k, v) in UserDefaults.standard.dictionary(forKey: mapStampsKey) as? [String: [Double]] ?? [:] {
+            if let id = UUID(uuidString: k), v.count == 2 { mapStamps[id] = (v[0], v[1]) }
+        }
         if let saved = UserDefaults.standard.dictionary(forKey: placesKey) as? [String: [String: Any]] {
             for (k, v) in saved {
                 guard let id = UUID(uuidString: k), let lat = v["lat"] as? Double,
@@ -88,6 +96,57 @@ final class WidgetBridge {
             WidgetCenter.shared.reloadTimelines(ofKind: WidgetKinds.item)
         }
         geocodeNext()
+        renderMapNext()
+    }
+
+    // MARK: Map pictures for the widget
+
+    /// One item at a time: render its last-seen spot (light and dark) and hand it to the widget.
+    /// Done here because MapKit is too heavy for the widget extension's memory limit.
+    private func renderMapNext() {
+        guard !renderingMap else { return }
+        let loc = LocationRecorder.shared
+        let ids = Set(BLEMonitor.shared.items.map(\.id))
+        guard let (id, fix) = loc.lastSeen.first(where: { id, fix in
+            guard ids.contains(id) else { return false }
+            guard let st = mapStamps[id] else { return true }
+            return CLLocation(latitude: st.lat, longitude: st.lon)
+                .distance(from: CLLocation(latitude: fix.lat, longitude: fix.lon)) > 25
+        }) else { return }
+        renderingMap = true
+        let center = CLLocationCoordinate2D(latitude: fix.lat, longitude: fix.lon)
+        Task { @MainActor in
+            let light = await Self.snapshot(center, dark: false)
+            let dark = await Self.snapshot(center, dark: true)
+            self.renderingMap = false
+            guard let light, let dark else { return }   // offline or suspended: retry on the next update
+            AppGroup.writeData(light, MapFiles.name(id, dark: false))
+            AppGroup.writeData(dark, MapFiles.name(id, dark: true))
+            self.mapStamps[id] = (fix.lat, fix.lon)
+            self.saveMapStamps()
+            WidgetCenter.shared.reloadTimelines(ofKind: WidgetKinds.item)
+            self.renderMapNext()
+        }
+    }
+
+    /// Small square JPEG centred on the spot. The widget draws the pin over the centre.
+    private static func snapshot(_ center: CLLocationCoordinate2D, dark: Bool) async -> Data? {
+        let o = MKMapSnapshotter.Options()
+        o.region = MKCoordinateRegion(center: center, latitudinalMeters: 350, longitudinalMeters: 350)
+        o.size = CGSize(width: 170, height: 170)
+        o.scale = 2
+        o.pointOfInterestFilter = .excludingAll
+        o.traitCollection = UITraitCollection(userInterfaceStyle: dark ? .dark : .light)
+        let shot: MKMapSnapshotter.Snapshot? = await withCheckedContinuation { cont in
+            MKMapSnapshotter(options: o).start(with: .main) { s, _ in cont.resume(returning: s) }
+        }
+        return shot?.image.jpegData(compressionQuality: 0.8)
+    }
+
+    private func saveMapStamps() {
+        var out: [String: [Double]] = [:]
+        for (k, v) in mapStamps { out[k.uuidString] = [v.lat, v.lon] }
+        UserDefaults.standard.set(out, forKey: mapStampsKey)
     }
 
     /// Cached street name if the fix is within ~40 m of the spot we already named.
@@ -127,6 +186,10 @@ final class WidgetBridge {
     func forget(_ id: UUID) {
         places[id] = nil
         savePlaces()
+        mapStamps[id] = nil
+        saveMapStamps()
+        AppGroup.remove(MapFiles.name(id, dark: false))
+        AppGroup.remove(MapFiles.name(id, dark: true))
     }
 }
 

@@ -1,7 +1,6 @@
 import WidgetKit
 import SwiftUI
 import AppIntents
-import MapKit
 
 // The widget only draws what the app saved into the App Group. iOS doesn't let widgets use
 // Bluetooth or run in the background, so the link to the item is held by the app itself.
@@ -75,27 +74,12 @@ struct ItemProvider: AppIntentTimelineProvider {
         let snap = SharedSnapshot.load()
         let item = snap.items.first { $0.id.uuidString == config.item?.id } ?? snap.items.first
         var e = ItemEntry(date: .now, item: item, water: WaterLog.load(), unit: snap.distanceUnit, shared: AppGroup.isShared)
-        if context.family == .systemMedium, let item, let lat = item.lat, let lon = item.lon {
-            let size = CGSize(width: context.displaySize.height, height: context.displaySize.height)
-            let c = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-            e.mapLight = await MapImage.make(center: c, size: size, dark: false)
-            e.mapDark = await MapImage.make(center: c, size: size, dark: true)
+        // Pictures the app already rendered. Nothing heavy happens here, so the timeline returns at once.
+        if context.family == .systemMedium, let item {
+            e.mapLight = AppGroup.readData(MapFiles.name(item.id, dark: false)).flatMap(UIImage.init(data:))
+            e.mapDark = AppGroup.readData(MapFiles.name(item.id, dark: true)).flatMap(UIImage.init(data:))
         }
         return e
-    }
-}
-
-/// Static map of the last-seen spot. Uses the saved coordinate only, no GPS.
-enum MapImage {
-    static func make(center: CLLocationCoordinate2D, size: CGSize, dark: Bool) async -> UIImage? {
-        let o = MKMapSnapshotter.Options()
-        o.region = MKCoordinateRegion(center: center, latitudinalMeters: 350, longitudinalMeters: 350)
-        o.size = size
-        o.pointOfInterestFilter = .excludingAll
-        o.traitCollection = UITraitCollection(userInterfaceStyle: dark ? .dark : .light)
-        return await withCheckedContinuation { cont in
-            MKMapSnapshotter(options: o).start { snap, _ in cont.resume(returning: snap?.image) }
-        }
     }
 }
 
