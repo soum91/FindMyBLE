@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.25",
+          "buildVersion": "25",
+          "date": "2026-10-23T17:35:38Z",
+          "localizedDescription": "- Use bounded streaming for App Group signature discovery on iOS (a0ee787)\n- Reduce widget extension startup and timeline memory usage (5967c62)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.25/FindMyBLE-1.0-build-25.ipa",
+          "size": 932451,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.23",
           "buildVersion": "23",
           "date": "2026-10-23T04:22:32Z",
@@ -119,11 +128,11 @@
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.23",
-      "versionDate": "2026-10-23T04:22:32Z",
-      "versionDescription": "- Fix the item widget stuck on its grey placeholder (edf6838)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.23/FindMyBLE-1.0-build-23.ipa",
-      "size": 930525,
+      "version": "1.0.25",
+      "versionDate": "2026-10-23T17:35:38Z",
+      "versionDescription": "- Use bounded streaming for App Group signature discovery on iOS (a0ee787)\n- Reduce widget extension startup and timeline memory usage (5967c62)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.25/FindMyBLE-1.0-build-25.ipa",
+      "size": 932451,
       "appPermissions": {}
     }
   ],
