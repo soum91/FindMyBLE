@@ -64,6 +64,10 @@ final class BLEMonitor: NSObject, ObservableObject {
     /// After leaving an area, how long the item may stay unheard before alerting. Gives a cap
     /// that wakes on movement a chance to show itself so we don't alert on something in your bag.
     private let verifySeconds: TimeInterval = 30
+    /// Items with a left-behind check in flight: the alert is queued, and any sign of the item
+    /// (a live link, an advertisement) before it fires cancels it.
+    private var verifying: [UUID: String] = [:]
+    private var verifyTask: UIBackgroundTaskIdentifier = .invalid
 
     private override init() {
         super.init()
@@ -397,6 +401,7 @@ final class BLEMonitor: NSObject, ObservableObject {
                 UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
         }
 
+        foundDuringCheck(id)
         s.lastSighting = now
         s.rssi = r
         s.rssiAt = now
@@ -460,11 +465,96 @@ final class BLEMonitor: NSObject, ObservableObject {
     private func handleLeftPlace(_ p: Place) {
         guard p.mode == .remind else { return }
         for it in items where it.alertsEnabled {
-            let s = state(it.id)
-            let withMe = s.isConnected || (s.lastSighting.map { Date().timeIntervalSince($0) < 90 } ?? false)
-            if withMe { continue }
-            scheduleLostAlert(it.id, after: verifySeconds,
-                              body: "You left \(p.name) without \(it.title). Grab it?")
+            // 90 s grace: a cap that isn't held connected naps between adverts while sitting in your bag.
+            confirmLeftBehind(it.id, heardWithin: 90, body: "You left \(p.name) without \(it.title). Grab it?")
+        }
+    }
+
+    /// Is the item with the phone right now? Asks iOS directly instead of trusting our own
+    /// bookkeeping, which starts empty when iOS relaunches the app for a geofence exit, and goes
+    /// stale while a connected cap stops advertising.
+    func isPresent(_ id: UUID, heardWithin recent: TimeInterval = 20) -> Bool {
+        guard let it = item(id) else { return false }
+        let s = state(id)
+        if s.isConnected || held[id]?.state == .connected { return true }
+        if let t = s.lastSighting, Date().timeIntervalSince(t) < recent { return true }
+        guard central.state == .poweredOn else { return false }
+        // Connected at the system level, by this app or another (the LARQ app), means in range.
+        let svc = Array(Set(Larq.allServices + it.serviceUUIDs))
+        return central.retrieveConnectedPeripherals(withServices: svc).contains { p in
+            p.identifier == knownPeripheral[id] || (p.name.map(it.matches) ?? false)
+        }
+    }
+
+    /// The phone just left somewhere. Queue the alert first (so it still fires if iOS suspends us),
+    /// then actually look for the item and cancel the alert the moment it turns up.
+    private func confirmLeftBehind(_ id: UUID, heardWithin recent: TimeInterval = 20, body: String) {
+        if isPresent(id, heardWithin: recent) { adoptSystemLink(id); return }
+        scheduleLostAlert(id, after: verifySeconds, body: body)
+        verifying[id] = body
+        if verifyTask == .invalid {
+            verifyTask = UIApplication.shared.beginBackgroundTask(withName: "leftBehindCheck") { [weak self] in
+                self?.endVerifyTask()
+            }
+        }
+        // Bluetooth may not be up yet in a fresh background launch; poweredOn re-runs this.
+        reconnectKnown()
+        updateScan(force: true)
+        for delay in [2.0, 6.0, 12.0, 20.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.recheckVerifying() }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 25) { [weak self] in self?.endVerifyTask() }
+    }
+
+    private func recheckVerifying() {
+        for id in Array(verifying.keys) where isPresent(id) { foundDuringCheck(id) }
+    }
+
+    /// It turned up: drop the queued alert.
+    private func foundDuringCheck(_ id: UUID) {
+        guard verifying.removeValue(forKey: id) != nil else { return }
+        cancelLostAlert(id)
+        adoptSystemLink(id)
+        if verifying.isEmpty { endVerifyTask() }
+    }
+
+    private func endVerifyTask() {
+        if verifyTask != .invalid { UIApplication.shared.endBackgroundTask(verifyTask) }
+        verifyTask = .invalid
+    }
+
+    /// If iOS has the item connected but our state says otherwise, take the link over and mark it.
+    private func adoptSystemLink(_ id: UUID) {
+        guard central.state == .poweredOn, let it = item(id), !state(id).isConnected else { return }
+        let svc = Array(Set(Larq.allServices + it.serviceUUIDs))
+        if let p = held[id].flatMap({ $0.state == .connected ? $0 : nil })
+            ?? central.retrieveConnectedPeripherals(withServices: svc).first(where: { p in
+                p.identifier == knownPeripheral[id] || (p.name.map(it.matches) ?? false) }) {
+            bind(id, p)
+            if p.state == .connected { markConnected(id, p) } else { central.connect(p, options: nil) }
+        }
+    }
+
+    /// Bring our state in line with a link that's already up (restored after a relaunch, or opened
+    /// by another app). didConnect doesn't fire for these.
+    private func markConnected(_ id: UUID, _ p: CBPeripheral) {
+        var s = state(id)
+        s.isConnected = true
+        s.status = .connected
+        s.lastLost = nil
+        s.lastSighting = Date()
+        live[id] = s
+        p.delegate = self
+        refreshServices(p)
+    }
+
+    /// Re-read battery and the UART on a link we didn't open ourselves. Needs Bluetooth up.
+    private func refreshServices(_ p: CBPeripheral) {
+        guard central?.state == .poweredOn, p.state == .connected else { return }
+        if let svcs = p.services, !svcs.isEmpty {
+            for sv in svcs { p.discoverCharacteristics(nil, for: sv) }
+        } else {
+            p.discoverServices(Larq.allServices)
         }
     }
 
@@ -478,16 +568,15 @@ final class BLEMonitor: NSObject, ObservableObject {
            TrustedPlaces.shared.containing(c) != nil {
             return
         }
-        let s = state(id)
-        let heardJustNow = s.isConnected || (s.lastSighting.map { Date().timeIntervalSince($0) < 20 } ?? false)
-        if heardJustNow {
+        if isPresent(id) {
+            // It's with us, the area just moved. Re-centre and don't alert.
+            adoptSystemLink(id)
             loc.recordNow(for: id)
             lastAreaArm[id] = Date()
             loc.armGeofence(for: id, radius: it.areaRadius)
             return
         }
-        scheduleLostAlert(id, after: verifySeconds,
-                          body: "You seem to have left without it. Tap to see where it is.")
+        confirmLeftBehind(id, body: "You seem to have left without it. Tap to see where it is.")
     }
 
     // MARK: - Alerts
@@ -610,6 +699,7 @@ extension BLEMonitor: CBCentralManagerDelegate {
                   let p = ps.first(where: { $0.identifier.uuidString == perStr }) else { continue }
             held[id] = p
             p.delegate = self
+            if p.state == .connected { markConnected(id, p) }
         }
     }
 
@@ -617,7 +707,11 @@ extension BLEMonitor: CBCentralManagerDelegate {
         btState = central.state
         if central.state == .poweredOn {
             updateScan(force: true)
+            // Links restored or opened by another app don't send didConnect; pick them up here.
+            for it in items { adoptSystemLink(it.id) }
+            for p in held.values where p.state == .connected { refreshServices(p) }
             reconnectKnown()
+            recheckVerifying()
         }
     }
 
@@ -631,6 +725,7 @@ extension BLEMonitor: CBCentralManagerDelegate {
         live[id] = s
         persistSightings()
         cancelLostAlert(id)
+        foundDuringCheck(id)
         LocationRecorder.shared.recordNow(for: id)
         if it.alertOnLeaveArea {
             lastAreaArm[id] = Date()
@@ -733,6 +828,7 @@ extension BLEMonitor: CBPeripheralDelegate {
         guard error == nil, RSSI.intValue != 127, let id = itemID(for: p) else { return }
         live[id]?.rssi = RSSI.intValue
         live[id]?.rssiAt = Date()
+        live[id]?.lastSighting = Date()
     }
 
     func peripheral(_ p: CBPeripheral, didUpdateValueFor c: CBCharacteristic, error: Error?) {
