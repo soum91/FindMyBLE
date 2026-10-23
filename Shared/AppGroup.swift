@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// Files shared between the app and the widget through the App Group container.
 enum AppGroup {
@@ -43,42 +44,16 @@ enum AppGroup {
         return (fallback, false, nil, unique, [fallback])
     }()
 
-    /// App Group IDs from this bundle's embedded.mobileprovision and its executable's code signature.
+    /// Read the running process's actual signed entitlements without loading or scanning its
+    /// executable. WidgetKit gives extensions a small memory budget and the old scan ran
+    /// during the first timeline request, before WidgetKit could display real content.
+    /// It also assumed the signing tool left an XML entitlement in the Mach-O binary.
     static func signedGroups() -> [String] {
-        var out: [String] = []
-        let bundle = Bundle.main
-        var files: [URL] = []
-        if let prov = bundle.url(forResource: "embedded", withExtension: "mobileprovision") { files.append(prov) }
-        if let exe = bundle.executableURL { files.append(exe) }
-        for url in files {
-            guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { continue }
-            for g in groups(in: data) where !out.contains(g) { out.append(g) }
-        }
-        return out
-    }
-
-    private static func groups(in data: Data) -> [String] {
-        let key = Data("<key>com.apple.security.application-groups</key>".utf8)
-        let open = Data("<string>".utf8), close = Data("</string>".utf8), end = Data("</array>".utf8)
-        var out: [String] = []
-        var searchFrom = data.startIndex
-        while let k = data.range(of: key, in: searchFrom..<data.endIndex) {
-            guard let arrayEnd = data.range(of: end, in: k.upperBound..<data.endIndex) else { break }
-            var cursor = k.upperBound
-            while let o = data.range(of: open, in: cursor..<arrayEnd.lowerBound),
-                  let c = data.range(of: close, in: o.upperBound..<arrayEnd.lowerBound) {
-                if let s = String(data: data[o.upperBound..<c.lowerBound], encoding: .utf8) {
-                    let id = s.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let valid = id.hasPrefix("group.") && id.unicodeScalars.allSatisfy {
-                        CharacterSet.alphanumerics.contains($0) || $0 == "." || $0 == "-" || $0 == "_"
-                    }
-                    if valid, !out.contains(id) { out.append(id) }
-                }
-                cursor = c.upperBound
-            }
-            searchFrom = arrayEnd.upperBound
-        }
-        return out
+        guard let task = SecTaskCreateFromSelf(nil),
+              let groups = SecTaskCopyValueForEntitlement(
+                task, "com.apple.security.application-groups" as CFString, nil
+              ) as? [String] else { return [] }
+        return groups.filter { $0.hasPrefix("group.") }
     }
 
     /// The containing app's bundle when running inside the widget extension.

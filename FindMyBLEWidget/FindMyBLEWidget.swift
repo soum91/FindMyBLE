@@ -50,8 +50,6 @@ struct ItemEntry: TimelineEntry {
     let water: WaterLog
     let unit: DistanceUnit
     let shared: Bool
-    var mapLight: UIImage? = nil
-    var mapDark: UIImage? = nil
 }
 
 struct ItemProvider: AppIntentTimelineProvider {
@@ -73,13 +71,11 @@ struct ItemProvider: AppIntentTimelineProvider {
     private func entry(_ config: SelectItemIntent, _ context: Context) async -> ItemEntry {
         let snap = SharedSnapshot.load()
         let item = snap.items.first { $0.id.uuidString == config.item?.id } ?? snap.items.first
-        var e = ItemEntry(date: .now, item: item, water: WaterLog.load(), unit: snap.distanceUnit, shared: AppGroup.isShared)
-        // Pictures the app already rendered. Nothing heavy happens here, so the timeline returns at once.
-        if context.family == .systemMedium, let item {
-            e.mapLight = AppGroup.readData(MapFiles.name(item.id, dark: false)).flatMap(UIImage.init(data:))
-            e.mapDark = AppGroup.readData(MapFiles.name(item.id, dark: true)).flatMap(UIImage.init(data:))
-        }
-        return e
+        // The timeline holds only small value types. Image I/O and UIKit image creation are
+        // delayed until the medium widget actually draws, avoiding two retained map images
+        // in the already memory-constrained timeline extension.
+        return ItemEntry(date: .now, item: item, water: WaterLog.load(), unit: snap.distanceUnit,
+                         shared: AppGroup.isShared)
     }
 }
 
@@ -140,7 +136,7 @@ struct ItemWidgetView: View {
     private func medium(_ it: SharedItem) -> some View {
         HStack(spacing: 0) {
             ZStack {
-                if let img = scheme == .dark ? (e.mapDark ?? e.mapLight) : (e.mapLight ?? e.mapDark) {
+                if let img = mapImage(for: it.id) {
                     Image(uiImage: img).resizable().scaledToFill()
                 } else {
                     ItemPalette.color(it.colorIndex).opacity(0.15)
@@ -181,6 +177,15 @@ struct ItemWidgetView: View {
             }
             .padding(12)
         }
+    }
+
+    /// Decode only the requested appearance, and only for the medium widget.
+    /// The app produces these tiny JPEGs, never the widget's MapKit process.
+    private func mapImage(for id: UUID) -> UIImage? {
+        let dark = scheme == .dark
+        let data = AppGroup.readData(MapFiles.name(id, dark: dark))
+            ?? AppGroup.readData(MapFiles.name(id, dark: !dark))
+        return data.flatMap { UIImage(data: $0) }
     }
 
     private func rectangular(_ it: SharedItem) -> some View {
