@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 /// Files shared between the app and the widget through the App Group container.
 enum AppGroup {
@@ -44,16 +43,56 @@ enum AppGroup {
         return (fallback, false, nil, unique, [fallback])
     }()
 
-    /// Read the running process's actual signed entitlements without loading or scanning its
-    /// executable. WidgetKit gives extensions a small memory budget and the old scan ran
-    /// during the first timeline request, before WidgetKit could display real content.
-    /// It also assumed the signing tool left an XML entitlement in the Mach-O binary.
+    /// Read signed App Group IDs without loading the entire executable into widget memory.
+    /// iOS doesn't expose SecTask entitlement APIs to third-party apps; sideloaders may also
+    /// rewrite the group ID, so scanning the small XML signature region remains useful.
+    /// A bounded, overlapping stream keeps peak allocations low in the widget extension.
     static func signedGroups() -> [String] {
-        guard let task = SecTaskCreateFromSelf(nil),
-              let groups = SecTaskCopyValueForEntitlement(
-                task, "com.apple.security.application-groups" as CFString, nil
-              ) as? [String] else { return [] }
-        return groups.filter { $0.hasPrefix("group.") }
+        var result: [String] = []
+        let bundle = Bundle.main
+        let files = [bundle.url(forResource: "embedded", withExtension: "mobileprovision"),
+                     bundle.executableURL].compactMap { $0 }
+        for url in files {
+            guard let stream = InputStream(url: url) else { continue }
+            stream.open()
+            defer { stream.close() }
+            var tail = Data()
+            let chunkSize = 64 * 1024
+            var bytes = [UInt8](repeating: 0, count: chunkSize)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&bytes, maxLength: chunkSize)
+                if count <= 0 { break }
+                var chunk = tail
+                chunk.append(contentsOf: bytes[..<count])
+                for group in groups(in: chunk) where !result.contains(group) { result.append(group) }
+                tail = Data(chunk.suffix(16 * 1024))
+            }
+        }
+        return result
+    }
+
+    private static func groups(in data: Data) -> [String] {
+        let key = Data("<key>com.apple.security.application-groups</key>".utf8)
+        let open = Data("<string>".utf8), close = Data("</string>".utf8), end = Data("</array>".utf8)
+        var result: [String] = []
+        var searchFrom = data.startIndex
+        while let k = data.range(of: key, in: searchFrom..<data.endIndex) {
+            guard let arrayEnd = data.range(of: end, in: k.upperBound..<data.endIndex) else { break }
+            var cursor = k.upperBound
+            while let o = data.range(of: open, in: cursor..<arrayEnd.lowerBound),
+                  let c = data.range(of: close, in: o.upperBound..<arrayEnd.lowerBound) {
+                if let id = String(data: data[o.upperBound..<c.lowerBound], encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    id.hasPrefix("group."),
+                    id.unicodeScalars.allSatisfy({
+                        CharacterSet.alphanumerics.contains($0) || $0 == "." || $0 == "-" || $0 == "_"
+                    }), !result.contains(id) {
+                    result.append(id)
+                }
+                cursor = c.upperBound
+            }
+            searchFrom = arrayEnd.upperBound
+        }
+        return result
     }
 
     /// The containing app's bundle when running inside the widget extension.
