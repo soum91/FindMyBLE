@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.22",
+          "buildVersion": "22",
+          "date": "2026-10-23T02:25:19Z",
+          "localizedDescription": "- Leaving home only alerts if the bottle really isn't with you (a6258e0)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.22/FindMyBLE-1.0-build-22.ipa",
+          "size": 921553,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.21",
           "buildVersion": "21",
           "date": "2026-10-21T03:18:42Z",
@@ -101,11 +110,11 @@
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.21",
-      "versionDate": "2026-10-21T03:18:42Z",
-      "versionDescription": "- Widgets, water log, battery labels, bottle icon, stronger background link (b30a69d)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.21/FindMyBLE-1.0-build-21.ipa",
-      "size": 913965,
+      "version": "1.0.22",
+      "versionDate": "2026-10-23T02:25:19Z",
+      "versionDescription": "- Leaving home only alerts if the bottle really isn't with you (a6258e0)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.22/FindMyBLE-1.0-build-22.ipa",
+      "size": 921553,
       "appPermissions": {}
     }
   ],
