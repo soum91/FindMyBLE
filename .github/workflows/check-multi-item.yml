@@ -1,0 +1,16 @@
+name: Compile check (temporary, branch only)
+on:
+  push:
+    branches: [multi-item]
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen && xcodegen generate
+      - run: |
+          set -o pipefail
+          xcodebuild -project FindMyBLE.xcodeproj -scheme FindMyBLE -configuration Release -sdk iphoneos \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build \
+            2>&1 | tee build.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
