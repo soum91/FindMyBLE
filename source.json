@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.23",
+          "buildVersion": "23",
+          "date": "2026-10-23T04:22:32Z",
+          "localizedDescription": "- Fix the item widget stuck on its grey placeholder (edf6838)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.23/FindMyBLE-1.0-build-23.ipa",
+          "size": 930525,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.22",
           "buildVersion": "22",
           "date": "2026-10-23T02:25:19Z",
@@ -110,11 +119,11 @@
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.22",
-      "versionDate": "2026-10-23T02:25:19Z",
-      "versionDescription": "- Leaving home only alerts if the bottle really isn't with you (a6258e0)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.22/FindMyBLE-1.0-build-22.ipa",
-      "size": 921553,
+      "version": "1.0.23",
+      "versionDate": "2026-10-23T04:22:32Z",
+      "versionDescription": "- Fix the item widget stuck on its grey placeholder (edf6838)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.23/FindMyBLE-1.0-build-23.ipa",
+      "size": 930525,
       "appPermissions": {}
     }
   ],
