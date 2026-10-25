@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.26",
+          "buildVersion": "26",
+          "date": "2026-10-25T13:32:01Z",
+          "localizedDescription": "- Add item alert toggles and Find Nearby controls (2dee37d)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.26/FindMyBLE-1.0-build-26.ipa",
+          "size": 976722,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.25",
           "buildVersion": "25",
           "date": "2026-10-23T17:35:38Z",
@@ -128,11 +137,11 @@
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.25",
-      "versionDate": "2026-10-23T17:35:38Z",
-      "versionDescription": "- Use bounded streaming for App Group signature discovery on iOS (a0ee787)\n- Reduce widget extension startup and timeline memory usage (5967c62)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.25/FindMyBLE-1.0-build-25.ipa",
-      "size": 932451,
+      "version": "1.0.26",
+      "versionDate": "2026-10-25T13:32:01Z",
+      "versionDescription": "- Add item alert toggles and Find Nearby controls (2dee37d)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.26/FindMyBLE-1.0-build-26.ipa",
+      "size": 976722,
       "appPermissions": {}
     }
   ],
