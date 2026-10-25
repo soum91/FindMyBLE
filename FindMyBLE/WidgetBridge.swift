@@ -64,6 +64,8 @@ final class WidgetBridge {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: w)
     }
 
+    func refreshControls() { publish(force: true) }
+
     private func publish(force: Bool = false) {
         let m = BLEMonitor.shared, loc = LocationRecorder.shared
         var snap = SharedSnapshot()
@@ -77,7 +79,7 @@ final class WidgetBridge {
                               status: s.status, isConnected: s.isConnected, lastSighting: s.lastSighting,
                               battery: batt?.level, batteryAt: batt?.at,
                               place: fix.flatMap { placeName(for: it.id, near: $0) },
-                              lat: fix?.lat, lon: fix?.lon, fixAt: fix?.date)
+                              lat: fix?.lat, lon: fix?.lon, fixAt: fix?.date, alertsEnabled: it.alertsEnabled)
         }
         snap.save()
 
@@ -94,6 +96,7 @@ final class WidgetBridge {
             lastSignature = sig
             lastReload = .now
             WidgetCenter.shared.reloadTimelines(ofKind: WidgetKinds.item)
+            if #available(iOS 18.0, *) { ControlCenter.shared.reloadAllControls() }
         }
         geocodeNext()
         renderMapNext()

@@ -196,6 +196,7 @@ struct SharedItem: Codable, Hashable, Identifiable {
     var lat: Double?
     var lon: Double?
     var fixAt: Date?
+    var alertsEnabled: Bool? = nil
 }
 
 struct SharedSnapshot: Codable {

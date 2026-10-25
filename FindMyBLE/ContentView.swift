@@ -96,6 +96,7 @@ struct Triangle: Shape {
 // MARK: - Sheet with tabs
 
 struct SheetRoot: View {
+    @ObservedObject private var quickRoute = FindMyBLERoute.shared
     let focus: (UUID) -> Void
     var body: some View {
         TabView {
@@ -103,6 +104,9 @@ struct SheetRoot: View {
                 .tabItem { Label("Items", systemImage: "circle.grid.2x2.fill") }
             MeTab()
                 .tabItem { Label("Me", systemImage: "person.crop.circle.fill") }
+        }
+        .sheet(isPresented: Binding(get: { quickRoute.finding != nil }, set: { if !$0 { quickRoute.finding = nil } })) {
+            if let id = quickRoute.finding { FindNearbyView(id: id) }
         }
     }
 }
