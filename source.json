@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.27",
+          "buildVersion": "27",
+          "date": "2026-10-27T01:40:10Z",
+          "localizedDescription": "- Run Shortcuts actions in the app instead of the widget extension (ded63da)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.27/FindMyBLE-1.0-build-27.ipa",
+          "size": 976814,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.26",
           "buildVersion": "26",
           "date": "2026-10-25T13:32:01Z",
@@ -137,11 +146,11 @@
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.26",
-      "versionDate": "2026-10-25T13:32:01Z",
-      "versionDescription": "- Add item alert toggles and Find Nearby controls (2dee37d)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.26/FindMyBLE-1.0-build-26.ipa",
-      "size": 976722,
+      "version": "1.0.27",
+      "versionDate": "2026-10-27T01:40:10Z",
+      "versionDescription": "- Run Shortcuts actions in the app instead of the widget extension (ded63da)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.27/FindMyBLE-1.0-build-27.ipa",
+      "size": 976814,
       "appPermissions": {}
     }
   ],
