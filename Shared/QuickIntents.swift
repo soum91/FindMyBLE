@@ -7,6 +7,11 @@ import WidgetKit
     @Parameter(title: "Item") var item: ItemEntity?
 }
 struct FindItemIntent: AppIntent {
+    #if WIDGET_EXTENSION
+    // The widget extension cannot be launched to run intents on this iOS, so
+    // Shortcuts must only see (and run) the copy inside the app.
+    static let isDiscoverable = false
+    #endif
     static var title: LocalizedStringResource = "Find Nearby"
     static var openAppWhenRun = true
     @Parameter(title: "Item") var item: ItemEntity?
@@ -23,6 +28,11 @@ struct FindItemIntent: AppIntent {
     }
 }
 @available(iOS 18.0, *) struct ItemAlertsIntent: SetValueIntent, LiveActivityIntent {
+    #if WIDGET_EXTENSION
+    // The widget extension cannot be launched to run intents on this iOS, so
+    // Shortcuts must only see (and run) the copy inside the app.
+    static let isDiscoverable = false
+    #endif
     static var title: LocalizedStringResource = "Item Left-Behind Alerts"
     @Parameter(title: "Item") var item: ItemEntity?
     @Parameter(title: "Enabled") var value: Bool
