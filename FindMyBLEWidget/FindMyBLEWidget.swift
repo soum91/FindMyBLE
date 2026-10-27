@@ -8,6 +8,7 @@ import AppIntents
 @main
 struct FindMyBLEWidgets: WidgetBundle {
     var body: some Widget {
+        FindMyBLELockWidget()
         if #available(iOS 18.0, *) { ItemAlertsControl(); FindItemControl() }
 
         ItemWidget()
