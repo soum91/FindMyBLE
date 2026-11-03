@@ -463,6 +463,8 @@ final class BLEMonitor: NSObject, ObservableObject {
 
     /// Left a trusted place set to "remind": nudge for every item that didn't come with you.
     private func handleLeftPlace(_ p: Place) {
+        // iCloud devices get checked on any departure, whatever the place's bottle setting is.
+        Task { @MainActor in FindMyStore.shared.requestCheck("left \(p.name)") }
         guard p.mode == .remind else { return }
         for it in items where it.alertsEnabled {
             // 90 s grace: a cap that isn't held connected naps between adverts while sitting in your bag.

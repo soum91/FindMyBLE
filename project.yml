@@ -36,6 +36,9 @@ targets:
         UIBackgroundModes:
         - bluetooth-central
         - location
+        - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+        - com.soumen.findmyble.refresh
         NSBluetoothAlwaysUsageDescription: Watches your items so you don't leave them
           behind.
         NSLocationWhenInUseUsageDescription: Saves where your item was when it disconnected.

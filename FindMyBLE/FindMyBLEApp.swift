@@ -1,5 +1,6 @@
 import SwiftUI
 import AppIntents
+import UIKit
 
 @main
 struct FindMyBLEApp: App {
@@ -9,6 +10,10 @@ struct FindMyBLEApp: App {
         _ = BLEMonitor.shared
         _ = LocationRecorder.shared
         WidgetBridge.shared.start()
+        // Find My: register the background refresh before launch finishes, and listen for
+        // visits and big moves so iOS can wake the app to check on your devices.
+        FindMyBackground.register()
+        Task { @MainActor in FindMyStore.shared.start() }
     }
 
     var body: some Scene {

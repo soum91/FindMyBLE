@@ -8,6 +8,7 @@ import UIKit
 struct ContentView: View {
     @ObservedObject var m = BLEMonitor.shared
     @ObservedObject var loc = LocationRecorder.shared
+    @ObservedObject var fm = FindMyStore.shared
     @State private var camera: MapCameraPosition = .userLocation(fallback: .automatic)
     @State private var detent: PresentationDetent = .fraction(0.4)
 
@@ -30,6 +31,11 @@ struct ContentView: View {
                     }
                 }
             }
+            ForEach(fm.devices) { d in
+                if let c = d.coordinate {
+                    Annotation(d.name, coordinate: c, anchor: .bottom) { DevicePin(device: d) }
+                }
+            }
         }
         .mapControls {
             MapUserLocationButton()
@@ -42,12 +48,19 @@ struct ContentView: View {
             focus(id)
         }
         .sheet(isPresented: .constant(true)) {
-            SheetRoot(focus: focus)
+            SheetRoot(focus: focus, focusCoordinate: focusCoordinate)
                 .presentationDetents([.height(110), .fraction(0.4), .large], selection: $detent)
                 .presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.4)))
                 .presentationCornerRadius(22)
                 .interactiveDismissDisabled()
         }
+    }
+
+    private func focusCoordinate(_ c: CLLocationCoordinate2D) {
+        withAnimation {
+            camera = .region(MKCoordinateRegion(center: c, latitudinalMeters: 600, longitudinalMeters: 600))
+        }
+        detent = .fraction(0.4)
     }
 
     /// Show the item's ring (or last-seen spot) on the map.
@@ -98,10 +111,13 @@ struct Triangle: Shape {
 struct SheetRoot: View {
     @ObservedObject private var quickRoute = FindMyBLERoute.shared
     let focus: (UUID) -> Void
+    let focusCoordinate: (CLLocationCoordinate2D) -> Void
     var body: some View {
         TabView {
             ItemsTab(focus: focus)
                 .tabItem { Label("Items", systemImage: "circle.grid.2x2.fill") }
+            DevicesTab(focus: focusCoordinate)
+                .tabItem { Label("Devices", systemImage: "iphone.gen3") }
             MeTab()
                 .tabItem { Label("Me", systemImage: "person.crop.circle.fill") }
         }

@@ -1,0 +1,18 @@
+name: Compile check
+on:
+  push:
+    branches: [multi-item]
+jobs:
+  check:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: xcodegen generate
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild -project FindMyBLE.xcodeproj -scheme FindMyBLE -configuration Release -sdk iphoneos \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1 || {
+              grep -E "error:" build.log | sort -u | head -20 | while read -r l; do echo "::error::${l:0:400}"; done
+              exit 1; }
