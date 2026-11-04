@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.36",
+          "buildVersion": "36",
+          "date": "2026-11-04T04:46:48Z",
+          "localizedDescription": "- Find My 2FA: read Apple's nested phone list (real number id), show Apple's own error text, explain 423 lockout (5039db9)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.36/FindMyBLE-1.0-build-36.ipa",
+          "size": 1258996,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.35",
           "buildVersion": "35",
           "date": "2026-11-04T04:35:41Z",
@@ -218,11 +227,11 @@
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.35",
-      "versionDate": "2026-11-04T04:35:41Z",
-      "versionDescription": "- feat: share Find My and LARQ battery readings with VoltScope (d8b152a)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.35/FindMyBLE-1.0-build-35.ipa",
-      "size": 1256353,
+      "version": "1.0.36",
+      "versionDate": "2026-11-04T04:46:48Z",
+      "versionDescription": "- Find My 2FA: read Apple's nested phone list (real number id), show Apple's own error text, explain 423 lockout (5039db9)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.36/FindMyBLE-1.0-build-36.ipa",
+      "size": 1258996,
       "appPermissions": {}
     }
   ],
