@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.32",
+          "buildVersion": "32",
+          "date": "2026-11-04T01:44:15Z",
+          "localizedDescription": "- Fix pbkdf2 expected value in SRP test (226d577)\n- SRP test vector: pass password the way the srp library expects (6842208)\n- Fix SRP test vector (salt without leading zero) (ae23e79)\n- Find My: native Apple ID sign-in (SRP + 2FA) with saved login for silent re-sign-in (185a532)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.32/FindMyBLE-1.0-build-32.ipa",
+          "size": 1233846,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.31",
           "buildVersion": "31",
           "date": "2026-11-04T00:53:45Z",
@@ -182,11 +191,11 @@
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.31",
-      "versionDate": "2026-11-04T00:53:45Z",
-      "versionDescription": "- Find My: fall back to calling iCloud from inside the signed-in icloud.com page when copied cookies are rejected (9aafeb2)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.31/FindMyBLE-1.0-build-31.ipa",
-      "size": 1173981,
+      "version": "1.0.32",
+      "versionDate": "2026-11-04T01:44:15Z",
+      "versionDescription": "- Fix pbkdf2 expected value in SRP test (226d577)\n- SRP test vector: pass password the way the srp library expects (6842208)\n- Fix SRP test vector (salt without leading zero) (ae23e79)\n- Find My: native Apple ID sign-in (SRP + 2FA) with saved login for silent re-sign-in (185a532)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.32/FindMyBLE-1.0-build-32.ipa",
+      "size": 1233846,
       "appPermissions": {}
     }
   ],
