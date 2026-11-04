@@ -96,6 +96,8 @@ struct FMDevice: Identifiable, Equatable, Codable {
     }
 }
 
+struct FMStatus { let statusCode: Int }
+
 enum FMError: LocalizedError {
     case notSignedIn, expired, http(Int), bad(String)
     var errorDescription: String? {
@@ -141,7 +143,10 @@ actor FindMyClient {
         cookies = Self.load()
     }
 
-    var hasSession: Bool { !cookies.isEmpty }
+    /// True once calls have to be made from inside the icloud.com page (see FindMyWebBridge).
+    private var webMode = UserDefaults.standard.bool(forKey: "fmWebMode")
+
+    var hasSession: Bool { !cookies.isEmpty || webMode }
 
     // MARK: Session
 
@@ -152,19 +157,23 @@ actor FindMyClient {
         root = nil
         save()
         FindMyLog.log("Adopted \(cookies.count) cookies from sign-in (\(Set(cookies.map(\.domain)).sorted().joined(separator: ", ")))")
+        FindMyLog.log("Cookie names: \(cookies.map(\.name).sorted().joined(separator: ", "))")
     }
 
-    func signOut() {
+    func signOut() async {
         cookies = []
         dsid = nil
         root = nil
+        webMode = false
+        UserDefaults.standard.set(false, forKey: "fmWebMode")
         try? FileManager.default.removeItem(at: Self.fileURL)
+        await FindMyWebBridge.shared.clear()
         FindMyLog.log("Signed out")
     }
 
     /// Learns the account id and the Find My server address.
     func validate() async throws {
-        guard !cookies.isEmpty else { throw FMError.notSignedIn }
+        guard hasSession else { throw FMError.notSignedIn }
         var c = URLComponents(string: "https://setup.icloud.com/setup/ws/1/validate")!
         c.queryItems = query(withDSID: false)
         let (data, http) = try await send(c.url!, body: nil)
@@ -258,7 +267,31 @@ actor FindMyClient {
         return q
     }
 
-    private func send(_ url: URL, body: Data?) async throws -> (Data, HTTPURLResponse) {
+    /// Native request first; if iCloud rejects the copied cookies, repeat it from inside the
+    /// icloud.com page and, when that works, keep doing it that way.
+    private func send(_ url: URL, body: Data?) async throws -> (Data, FMStatus) {
+        if webMode { return try await viaWeb(url, body: body) }
+        let (data, http) = try await sendNative(url, body: body)
+        if [401, 421, 450].contains(http.statusCode) {
+            FindMyLog.log("Native call got HTTP \(http.statusCode), trying from the iCloud page")
+            if let (d2, st) = try? await viaWeb(url, body: body), st.statusCode == 200 {
+                webMode = true
+                UserDefaults.standard.set(true, forKey: "fmWebMode")
+                FindMyLog.log("Working through the iCloud page from now on")
+                return (d2, st)
+            }
+            FindMyLog.log("The iCloud page didn't get through either")
+        }
+        return (data, FMStatus(statusCode: http.statusCode))
+    }
+
+    private func viaWeb(_ url: URL, body: Data?) async throws -> (Data, FMStatus) {
+        let (d, s) = try await FindMyWebBridge.shared.post(url, body: body)
+        FindMyLog.log("page call \(url.path.split(separator: "/").last.map(String.init) ?? "") -> HTTP \(s)")
+        return (d, FMStatus(statusCode: s))
+    }
+
+    private func sendNative(_ url: URL, body: Data?) async throws -> (Data, HTTPURLResponse) {
         var r = URLRequest(url: url)
         r.httpMethod = "POST"
         r.httpBody = body

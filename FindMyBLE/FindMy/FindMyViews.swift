@@ -13,12 +13,8 @@ struct ICloudWebView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(onCookies) }
 
     func makeUIView(context: Context) -> WKWebView {
-        let cfg = WKWebViewConfiguration()
-        cfg.websiteDataStore = .nonPersistent()
-        cfg.defaultWebpagePreferences.preferredContentMode = .desktop
-        let v = WKWebView(frame: .zero, configuration: cfg)
-        v.customUserAgent = FMConst.userAgent
-        v.load(URLRequest(url: URL(string: "https://www.icloud.com/find")!))
+        // The shared page: its login is kept, and it's the same one the app calls through later.
+        let v = FindMyWebBridge.shared.webView
         context.coordinator.web = v
         context.coordinator.start()
         return v
