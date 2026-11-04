@@ -268,7 +268,6 @@ final class FindMyStore: ObservableObject {
     func requestCheck(_ reason: String, force: Bool = false) {
         Task { await check(reason, force: force) }
     }
-    }
 
     /// Looks at where my devices are and where I am, and warns about any I seem to have left.
     func check(_ reason: String, force: Bool = false) async {
