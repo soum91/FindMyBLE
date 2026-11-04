@@ -183,6 +183,30 @@ final class FindMyStore: ObservableObject {
         }
     }
 
+    /// Native sign-in, step 1. The password is kept in the Keychain on this phone for silent re-sign-in.
+    func login(appleID: String, password: String) async throws -> FMLoginResult {
+        let r = try await client.login(appleID: appleID, password: password)
+        let id = appleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        UserDefaults.standard.set(id, forKey: "fmAppleID")
+        FMKeychain.set(id, password)
+        if case .signedIn = r { await didSignIn() }
+        return r
+    }
+
+    func textCode(phoneID: Int) async throws { try await client.textCode(phoneID: phoneID) }
+
+    func submitCode(_ code: String, phoneID: Int?) async throws {
+        try await client.submitCode(code, phoneID: phoneID)
+        await didSignIn()
+    }
+
+    private func didSignIn() async {
+        signedIn = true
+        lastError = nil
+        FindMyLog.log("Signed in")
+        await refresh(polls: 4)
+    }
+
     func signOut() {
         Task {
             await client.signOut()
@@ -214,6 +238,11 @@ final class FindMyStore: ObservableObject {
             apply(d)
             lastError = nil
         } catch FMError.expired {
+            if await client.silentRelogin(), let d = try? await client.devices(polls: polls) {
+                apply(d)
+                lastError = nil
+                return
+            }
             signedIn = false
             lastError = FMError.expired.localizedDescription
             FindMyLog.log("Session expired, sign in again")

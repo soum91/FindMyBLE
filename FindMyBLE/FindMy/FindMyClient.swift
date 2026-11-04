@@ -1,6 +1,7 @@
 import Foundation
 import CoreLocation
 import UIKit
+import Security
 
 // Talks to the same service icloud.com/find uses. Apple has no official API for this, so it can
 // stop working whenever Apple changes the site. Everything is logged (never passwords or cookie
@@ -98,6 +99,33 @@ struct FMDevice: Identifiable, Equatable, Codable {
 
 struct FMStatus { let statusCode: Int }
 
+struct FMPhone: Identifiable, Equatable { let id: Int; let label: String }
+
+enum FMLoginResult { case signedIn, needsCode([FMPhone]) }
+
+/// The saved Apple ID password, kept in the iOS Keychain on this phone only.
+enum FMKeychain {
+    private static func query(_ account: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "FindMyBLE.icloud",
+         kSecAttrAccount as String: account]
+    }
+    static func set(_ account: String, _ value: String) {
+        SecItemDelete(query(account) as CFDictionary)
+        var q = query(account)
+        q[kSecValueData as String] = Data(value.utf8)
+        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        SecItemAdd(q as CFDictionary, nil)
+    }
+    static func get(_ account: String) -> String? {
+        var q = query(account)
+        q[kSecReturnData as String] = true
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
+        return String(data: d, encoding: .utf8)
+    }
+    static func remove(_ account: String) { SecItemDelete(query(account) as CFDictionary) }
+}
+
 enum FMError: LocalizedError {
     case notSignedIn, expired, http(Int), bad(String)
     var errorDescription: String? {
@@ -168,6 +196,10 @@ actor FindMyClient {
         UserDefaults.standard.set(false, forKey: "fmWebMode")
         try? FileManager.default.removeItem(at: Self.fileURL)
         await FindMyWebBridge.shared.clear()
+        if let id = UserDefaults.standard.string(forKey: "fmAppleID") { FMKeychain.remove(id) }
+        UserDefaults.standard.removeObject(forKey: "fmAppleID")
+        UserDefaults.standard.removeObject(forKey: "fmTrust")
+        trustToken = ""
         FindMyLog.log("Signed out")
     }
 
@@ -255,6 +287,200 @@ actor FindMyClient {
         FindMyLog.log("playSound -> HTTP \(http.statusCode)")
         if [401, 421, 450].contains(http.statusCode) { throw FMError.expired }
         guard http.statusCode == 200 else { throw FMError.http(http.statusCode) }
+    }
+
+
+    // MARK: Native sign-in (Apple ID + password + 2FA), same steps as icloud.com
+
+    private static let authBase = "https://idmsa.apple.com/appleauth/auth"
+    private static let widgetKey = "d39ba9916b7251055b22c7f910e2ea796ee65e98b2ddecea8f5dde8d9d1a815d"
+    private var scnt = ""
+    private var authSessionID = ""
+    private var sessionToken = ""
+    private var trustToken = UserDefaults.standard.string(forKey: "fmTrust") ?? ""
+    private var accountCountry = ""
+
+    private func authHeaders(json: Bool = true) -> [String: String] {
+        var h = [
+            "Accept": json ? "application/json" : "*/*",
+            "Content-Type": "application/json",
+            "Origin": "https://idmsa.apple.com",
+            "Referer": "https://idmsa.apple.com/",
+            "X-Apple-OAuth-Client-Id": Self.widgetKey,
+            "X-Apple-OAuth-Client-Type": "firstPartyAuth",
+            "X-Apple-OAuth-Redirect-URI": FMConst.origin,
+            "X-Apple-OAuth-Require-Grant-Code": "true",
+            "X-Apple-OAuth-Response-Mode": "web_message",
+            "X-Apple-OAuth-Response-Type": "code",
+            "X-Apple-OAuth-State": clientId,
+            "X-Apple-Widget-Key": Self.widgetKey,
+        ]
+        if !scnt.isEmpty { h["scnt"] = scnt }
+        if !authSessionID.isEmpty { h["X-Apple-ID-Session-Id"] = authSessionID }
+        return h
+    }
+
+    private func capture(_ http: HTTPURLResponse) {
+        if let v = http.value(forHTTPHeaderField: "scnt") { scnt = v }
+        if let v = http.value(forHTTPHeaderField: "X-Apple-ID-Session-Id") { authSessionID = v }
+        if let v = http.value(forHTTPHeaderField: "X-Apple-Session-Token") { sessionToken = v }
+        if let v = http.value(forHTTPHeaderField: "X-Apple-TwoSV-Trust-Token") {
+            trustToken = v
+            UserDefaults.standard.set(v, forKey: "fmTrust")
+        }
+        if let v = http.value(forHTTPHeaderField: "X-Apple-ID-Account-Country") { accountCountry = v }
+    }
+
+    private func raw(_ url: URL, method: String, headers: [String: String], body: Data?) async throws -> (Data, HTTPURLResponse) {
+        var r = URLRequest(url: url)
+        r.httpMethod = method
+        r.httpBody = body
+        r.setValue(FMConst.userAgent, forHTTPHeaderField: "User-Agent")
+        for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
+        if let h = cookieHeader(for: url) { r.setValue(h, forHTTPHeaderField: "Cookie") }
+        let (data, resp) = try await session.data(for: r)
+        guard let http = resp as? HTTPURLResponse else { throw FMError.bad("No response from Apple.") }
+        var fields: [String: String] = [:]
+        for (k, v) in http.allHeaderFields { if let k = k as? String, let v = v as? String { fields[k] = v } }
+        let fresh = HTTPCookie.cookies(withResponseHeaderFields: fields, for: url)
+        if !fresh.isEmpty { merge(fresh) }
+        capture(http)
+        return (data, http)
+    }
+
+    private func b64(_ b: [UInt8]) -> String { Data(b).base64EncodedString() }
+
+    /// Step 1: password. Returns .signedIn, or .needsCode when Apple wants the 2FA code.
+    func login(appleID: String, password: String) async throws -> FMLoginResult {
+        let id = appleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        scnt = ""; authSessionID = ""; sessionToken = ""
+        cookies = []
+        let srp = SRP.Client()
+        let initBody: [String: Any] = ["a": b64(srp.A.bytes), "accountName": id, "protocols": ["s2k", "s2k_fo"]]
+        let (d1, r1) = try await raw(URL(string: Self.authBase + "/signin/init")!, method: "POST",
+                                     headers: authHeaders(), body: try JSONSerialization.data(withJSONObject: initBody))
+        FindMyLog.log("signin/init -> HTTP \(r1.statusCode)")
+        guard r1.statusCode == 200,
+              let j = try? JSONSerialization.jsonObject(with: d1) as? [String: Any],
+              let saltS = j["salt"] as? String, let bS = j["b"] as? String, let c = j["c"] as? String,
+              let salt = Data(base64Encoded: saltS), let B = Data(base64Encoded: bS) else {
+            FindMyLog.log("signin/init body: \(String(decoding: d1.prefix(200), as: UTF8.self))")
+            throw FMError.bad(r1.statusCode == 401 || r1.statusCode == 403 ? "Apple rejected that Apple ID." : "Apple's sign-in didn't answer as expected (HTTP \(r1.statusCode)).")
+        }
+        let iter = (j["iteration"] as? NSNumber)?.intValue ?? 0
+        let proto = (j["protocol"] as? String) ?? "s2k"
+        FindMyLog.log("signin/init: protocol \(proto), \(iter) iterations")
+        let key = SRP.derivePassword(password, salt: [UInt8](salt), iterations: iter, protocolName: proto)
+        guard !key.isEmpty, let proof = srp.respond(account: id, salt: [UInt8](salt), B: [UInt8](B), key: key) else {
+            throw FMError.bad("Couldn't compute the sign-in proof.")
+        }
+        let completeBody: [String: Any] = ["accountName": id, "c": c, "m1": b64(proof.m1), "m2": b64(proof.m2),
+                                           "rememberMe": true, "trustTokens": trustToken.isEmpty ? [] : [trustToken]]
+        let (d2, r2) = try await raw(URL(string: Self.authBase + "/signin/complete?isRememberMeEnabled=true")!, method: "POST",
+                                     headers: authHeaders(), body: try JSONSerialization.data(withJSONObject: completeBody))
+        FindMyLog.log("signin/complete -> HTTP \(r2.statusCode)")
+        switch r2.statusCode {
+        case 200, 204:
+            try await finishLogin()
+            return .signedIn
+        case 409:
+            let phones = await twoFactorOptions()
+            return .needsCode(phones)
+        case 401:
+            throw FMError.bad("Wrong Apple ID or password.")
+        default:
+            FindMyLog.log("signin/complete body: \(String(decoding: d2.prefix(200), as: UTF8.self))")
+            throw FMError.bad("Apple refused the sign-in (HTTP \(r2.statusCode)).")
+        }
+    }
+
+    private func twoFactorOptions() async -> [FMPhone] {
+        guard let (d, r) = try? await raw(URL(string: Self.authBase)!, method: "GET", headers: authHeaders(), body: nil) else { return [] }
+        FindMyLog.log("2FA info -> HTTP \(r.statusCode)")
+        guard let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let list = j["trustedPhoneNumbers"] as? [[String: Any]] else { return [] }
+        return list.compactMap { p in
+            guard let id = (p["id"] as? NSNumber)?.intValue else { return nil }
+            return FMPhone(id: id, label: (p["numberWithDialCode"] as? String) ?? "phone \(id)")
+        }
+    }
+
+    /// Ask Apple to text the code to one of the trusted numbers.
+    func textCode(phoneID: Int) async throws {
+        let body = try JSONSerialization.data(withJSONObject: ["phoneNumber": ["id": phoneID], "mode": "sms"] as [String: Any])
+        let (_, r) = try await raw(URL(string: Self.authBase + "/verify/phone")!, method: "PUT", headers: authHeaders(), body: body)
+        FindMyLog.log("text code -> HTTP \(r.statusCode)")
+        guard (200...204).contains(r.statusCode) else { throw FMError.bad("Apple wouldn't send the text (HTTP \(r.statusCode)).") }
+    }
+
+    /// Step 2: the 6-digit code, from a trusted device or (with `phoneID`) from a text.
+    func submitCode(_ code: String, phoneID: Int?) async throws {
+        let clean = code.filter(\.isNumber)
+        let url: String
+        let obj: [String: Any]
+        if let phoneID {
+            url = "/verify/phone/securitycode"
+            obj = ["phoneNumber": ["id": phoneID], "securityCode": ["code": clean], "mode": "sms"]
+        } else {
+            url = "/verify/trusteddevice/securitycode"
+            obj = ["securityCode": ["code": clean]]
+        }
+        let (d, r) = try await raw(URL(string: Self.authBase + url)!, method: "POST", headers: authHeaders(),
+                                   body: try JSONSerialization.data(withJSONObject: obj))
+        FindMyLog.log("verify code -> HTTP \(r.statusCode)")
+        guard (200...204).contains(r.statusCode) else {
+            FindMyLog.log("verify body: \(String(decoding: d.prefix(200), as: UTF8.self))")
+            throw FMError.bad(r.statusCode == 400 || r.statusCode == 403 ? "That code was wrong or expired." : "Apple refused the code (HTTP \(r.statusCode)).")
+        }
+        // Trust this app, so the next sign-in skips the code.
+        let (_, t) = try await raw(URL(string: Self.authBase + "/2sv/trust")!, method: "GET",
+                                   headers: authHeaders(), body: nil)
+        FindMyLog.log("2sv/trust -> HTTP \(t.statusCode)")
+        try await finishLogin()
+    }
+
+    /// Turns Apple's session token into an iCloud session and finds the Find My server.
+    private func finishLogin() async throws {
+        guard !sessionToken.isEmpty else { throw FMError.bad("Apple didn't hand back a session token.") }
+        var c = URLComponents(string: "https://setup.icloud.com/setup/ws/1/accountLogin")!
+        c.queryItems = query(withDSID: false)
+        let obj: [String: Any] = ["accountCountryCode": accountCountry, "dsWebAuthToken": sessionToken,
+                                  "extended_login": true, "trustToken": trustToken]
+        let (data, r) = try await raw(c.url!, method: "POST",
+                                      headers: ["Content-Type": "text/plain;charset=UTF-8", "Accept": "*/*",
+                                                "Origin": FMConst.origin, "Referer": FMConst.origin + "/"],
+                                      body: try JSONSerialization.data(withJSONObject: obj))
+        FindMyLog.log("accountLogin -> HTTP \(r.statusCode)")
+        guard r.statusCode == 200, let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            FindMyLog.log("accountLogin body: \(String(decoding: data.prefix(200), as: UTF8.self))")
+            throw FMError.bad("iCloud refused the session (HTTP \(r.statusCode)).")
+        }
+        let ds = j["dsInfo"] as? [String: Any]
+        let web = j["webservices"] as? [String: Any]
+        FindMyLog.log("accountLogin: services \((web?.keys.sorted() ?? []).joined(separator: ","))")
+        guard let id = ds?["dsid"] else { throw FMError.bad("iCloud didn't return an account id.") }
+        dsid = "\(id)"
+        guard let fm = web?["findme"] as? [String: Any], let url = fm["url"] as? String, !url.isEmpty else {
+            throw FMError.bad("This account has no Find My service listed.")
+        }
+        root = url.replacingOccurrences(of: ":443", with: "")
+        webMode = false
+        UserDefaults.standard.set(false, forKey: "fmWebMode")
+        save()
+        FindMyLog.log("Signed in natively. Find My server: \(URL(string: root ?? "")?.host ?? "?")")
+    }
+
+    /// Re-sign-in with the saved Apple ID and password; Apple's trust token skips the 2FA code.
+    func silentRelogin() async -> Bool {
+        guard let id = UserDefaults.standard.string(forKey: "fmAppleID"), let pw = FMKeychain.get(id) else { return false }
+        FindMyLog.log("Session expired, signing in again with the saved login")
+        do {
+            if case .signedIn = try await login(appleID: id, password: pw) { return true }
+            FindMyLog.log("Apple wants a new code; sign in again from the Devices tab")
+        } catch {
+            FindMyLog.log("Silent sign-in failed: \(error.localizedDescription)")
+        }
+        return false
     }
 
     // MARK: HTTP

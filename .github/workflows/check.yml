@@ -7,6 +7,10 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: SRP self-test
+        run: |
+          swiftc -O FindMyBLE/FindMy/SRP.swift Tests/main.swift -o srptest
+          ./srptest | tee srp.out; ! grep -q FAIL srp.out || { grep -A2 FAIL srp.out | while read -r l; do echo "::error::$l"; done; exit 1; }
       - run: brew install xcodegen
       - run: xcodegen generate
       - name: Build

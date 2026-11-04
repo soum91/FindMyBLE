@@ -61,16 +61,118 @@ struct ICloudWebView: UIViewRepresentable {
 struct FindMyLoginView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var fm = FindMyStore.shared
+    @State private var appleID = UserDefaults.standard.string(forKey: "fmAppleID") ?? ""
+    @State private var password = ""
+    @State private var code = ""
+    @State private var phones: [FMPhone] = []
+    @State private var needsCode = false
+    @State private var textedTo: FMPhone?
+    @State private var busy = false
+    @State private var error: String?
+    @State private var showWeb = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if !needsCode {
+                    Section {
+                        TextField("Apple ID (email)", text: $appleID)
+                            .textContentType(.username)
+                            .keyboardType(.emailAddress)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        SecureField("Password", text: $password)
+                            .textContentType(.password)
+                    } footer: {
+                        Text("Goes straight to Apple, the same way icloud.com signs you in. The password is also saved in this phone's Keychain so the app can sign back in by itself when the session runs out.")
+                    }
+                    Section {
+                        Button { signIn() } label: {
+                            HStack { Text("Sign In"); if busy { Spacer(); ProgressView() } }
+                        }
+                        .disabled(busy || appleID.isEmpty || password.isEmpty)
+                    }
+                } else {
+                    Section {
+                        TextField("6-digit code", text: $code)
+                            .keyboardType(.numberPad)
+                            .textContentType(.oneTimeCode)
+                    } footer: {
+                        Text(textedTo.map { "Texted to \($0.label)." } ?? "Apple sent a code to your other devices.")
+                    }
+                    Section {
+                        Button { verify() } label: {
+                            HStack { Text("Verify"); if busy { Spacer(); ProgressView() } }
+                        }
+                        .disabled(busy || code.filter(\.isNumber).count < 6)
+                        ForEach(phones) { p in
+                            Button("Text a code to \(p.label)") { text(p) }.disabled(busy)
+                        }
+                    }
+                }
+                if let e = error {
+                    Section { Text(e).foregroundStyle(.red) }
+                }
+                Section {
+                    Button("Use Apple's web page instead") { showWeb = true }
+                        .font(.footnote)
+                }
+            }
+            .navigationTitle("Sign in to iCloud")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            }
+            .sheet(isPresented: $showWeb) { FindMyWebLoginView(done: { showWeb = false; dismiss() }) }
+        }
+    }
+
+    private func signIn() {
+        busy = true; error = nil
+        Task {
+            do {
+                switch try await fm.login(appleID: appleID, password: password) {
+                case .signedIn: dismiss()
+                case .needsCode(let p): phones = p; needsCode = true
+                }
+            } catch { self.error = error.localizedDescription }
+            busy = false
+        }
+    }
+
+    private func verify() {
+        busy = true; error = nil
+        Task {
+            do { try await fm.submitCode(code, phoneID: textedTo?.id); dismiss() }
+            catch { self.error = error.localizedDescription }
+            busy = false
+        }
+    }
+
+    private func text(_ p: FMPhone) {
+        busy = true; error = nil
+        Task {
+            do { try await fm.textCode(phoneID: p.id); textedTo = p }
+            catch { self.error = error.localizedDescription }
+            busy = false
+        }
+    }
+}
+
+/// Fallback: sign in on Apple's own page.
+struct FindMyWebLoginView: View {
+    @Environment(\.dismiss) private var dismiss
+    let done: () -> Void
 
     var body: some View {
         NavigationStack {
             ICloudWebView { cookies in
                 let ok = await FindMyStore.shared.signIn(cookies: cookies)
-                if ok { dismiss() }
+                if ok { done() }
                 return ok
             }
             .ignoresSafeArea(edges: .bottom)
-            .navigationTitle("Sign in to iCloud")
+            .navigationTitle("Apple's sign-in page")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -106,7 +208,7 @@ struct DevicesTab: View {
                         }
                         .padding(.vertical, 4)
                     } footer: {
-                        Text("Sign-in happens on Apple's own page, so this app never sees your password. This uses the same service as icloud.com/find, which Apple doesn't offer as a public API, so it can break without notice. Use at your own risk.")
+                        Text("You sign in with your Apple ID and password, and 2FA code if asked. This uses the same service as icloud.com/find, which Apple doesn't offer as a public API, so it can break without notice. Use at your own risk.")
                     }
                 } else {
                     Section {
