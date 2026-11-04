@@ -193,6 +193,8 @@ final class FindMyStore: ObservableObject {
         return r
     }
 
+    func resendCodes() async -> [FMPhone] { await client.twoFactorOptions() }
+
     func textCode(phoneID: Int) async throws { try await client.textCode(phoneID: phoneID) }
 
     func submitCode(_ code: String, phoneID: Int?) async throws {

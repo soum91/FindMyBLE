@@ -394,15 +394,28 @@ actor FindMyClient {
         }
     }
 
-    private func twoFactorOptions() async -> [FMPhone] {
-        guard let (d, r) = try? await raw(URL(string: Self.authBase)!, method: "GET", headers: authHeaders(), body: nil) else { return [] }
-        FindMyLog.log("2FA info -> HTTP \(r.statusCode)")
-        guard let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
-              let list = j["trustedPhoneNumbers"] as? [[String: Any]] else { return [] }
-        return list.compactMap { p in
-            guard let id = (p["id"] as? NSNumber)?.intValue else { return nil }
-            return FMPhone(id: id, label: (p["numberWithDialCode"] as? String) ?? "phone \(id)")
+    /// Asks Apple which ways it can deliver the code. The request itself is what makes Apple push
+    /// the code to your other devices.
+    func twoFactorOptions() async -> [FMPhone] {
+        var hdr = authHeaders()
+        hdr["Accept"] = "application/json"
+        guard let (d, r) = try? await raw(URL(string: Self.authBase)!, method: "GET", headers: hdr, body: nil) else {
+            FindMyLog.log("2FA info: request failed")
+            return [FMPhone(id: 1, label: "your trusted number")]
         }
+        FindMyLog.log("2FA info -> HTTP \(r.statusCode): \(String(decoding: d.prefix(300), as: UTF8.self))")
+        let j = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
+        var out: [FMPhone] = []
+        for p in (j?["trustedPhoneNumbers"] as? [[String: Any]]) ?? [] {
+            if let id = (p["id"] as? NSNumber)?.intValue {
+                out.append(FMPhone(id: id, label: (p["numberWithDialCode"] as? String) ?? "phone \(id)"))
+            }
+        }
+        if out.isEmpty, let p = j?["trustedPhoneNumber"] as? [String: Any], let id = (p["id"] as? NSNumber)?.intValue {
+            out.append(FMPhone(id: id, label: (p["numberWithDialCode"] as? String) ?? "phone \(id)"))
+        }
+        // Apple's first trusted number is id 1; offer it even if the list didn't parse.
+        return out.isEmpty ? [FMPhone(id: 1, label: "your trusted number")] : out
     }
 
     /// Ask Apple to text the code to one of the trusted numbers.

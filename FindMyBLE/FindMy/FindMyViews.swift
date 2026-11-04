@@ -105,6 +105,10 @@ struct FindMyLoginView: View {
                             HStack { Text("Verify"); if busy { Spacer(); ProgressView() } }
                         }
                         .disabled(busy || code.filter(\.isNumber).count < 6)
+                        Button("Send the code to my devices again") {
+                            busy = true
+                            Task { phones = await fm.resendCodes(); busy = false }
+                        }.disabled(busy)
                         ForEach(phones) { p in
                             Button("Text a code to \(p.label)") { text(p) }.disabled(busy)
                         }
