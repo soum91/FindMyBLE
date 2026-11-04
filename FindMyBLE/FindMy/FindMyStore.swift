@@ -215,6 +215,7 @@ final class FindMyStore: ObservableObject {
             signedIn = false
             devices = []
             save(devices, "fmDevices")
+            BatteryHandoff.publishSnapshot()
         }
     }
 
@@ -259,6 +260,7 @@ final class FindMyStore: ObservableObject {
         lastRefresh = Date()
         defaults.set(lastRefresh, forKey: "fmLastRefresh")
         save(d, "fmDevices")
+        BatteryHandoff.publishSnapshot()
     }
 
     // MARK: Left-behind check

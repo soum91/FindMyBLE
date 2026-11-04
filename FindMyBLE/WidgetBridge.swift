@@ -82,6 +82,7 @@ final class WidgetBridge {
                               lat: fix?.lat, lon: fix?.lon, fixAt: fix?.date, alertsEnabled: it.alertsEnabled)
         }
         snap.save()
+        Task { @MainActor in BatteryHandoff.publishSnapshot() }
 
         // Reload only for changes worth a redraw; the widget's clocks tick on their own.
         var sig: [UUID: String] = [:]

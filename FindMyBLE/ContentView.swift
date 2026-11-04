@@ -44,8 +44,12 @@ struct ContentView: View {
         .onAppear { loc.requestPermission() }
         // Tapping the item widget opens here with the map on that item.
         .onOpenURL { url in
-            guard url.scheme == "findmyble", let id = UUID(uuidString: url.lastPathComponent) else { return }
-            focus(id)
+            guard url.scheme == "findmyble" else { return }
+            if url.host == "battery-export" {
+                BatteryHandoff.openVoltScope()
+            } else if let id = UUID(uuidString: url.lastPathComponent) {
+                focus(id)
+            }
         }
         .sheet(isPresented: .constant(true)) {
             SheetRoot(focus: focus, focusCoordinate: focusCoordinate)
