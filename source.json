@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.31",
+          "buildVersion": "31",
+          "date": "2026-11-04T00:53:45Z",
+          "localizedDescription": "- Find My: fall back to calling iCloud from inside the signed-in icloud.com page when copied cookies are rejected (9aafeb2)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.31/FindMyBLE-1.0-build-31.ipa",
+          "size": 1173981,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.30",
           "buildVersion": "30",
           "date": "2026-11-03T23:34:59Z",
@@ -173,11 +182,11 @@
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.30",
-      "versionDate": "2026-11-03T23:34:59Z",
-      "versionDescription": "- Find My devices via iCloud: Devices tab, map pins, left-behind alerts (e598413)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.30/FindMyBLE-1.0-build-30.ipa",
-      "size": 1162495,
+      "version": "1.0.31",
+      "versionDate": "2026-11-04T00:53:45Z",
+      "versionDescription": "- Find My: fall back to calling iCloud from inside the signed-in icloud.com page when copied cookies are rejected (9aafeb2)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.31/FindMyBLE-1.0-build-31.ipa",
+      "size": 1173981,
       "appPermissions": {}
     }
   ],
