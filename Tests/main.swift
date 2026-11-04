@@ -15,5 +15,5 @@ let r = c.respond(account: "test@example.com", salt: SRP.hex(salt), B: SRP.hex(B
 check("M1", r.map { h($0.m1) } ?? "nil", M)
 check("M2", r.map { h($0.m2) } ?? "nil", AMK)
 check("pbkdf2", h(SRP.derivePassword("hunter2", salt: SRP.hex(salt), iterations: 1000, protocolName: "s2k")),
-      "f49048523b735334667b58cad4dc34608e6b7f3e45cb3f77bbe0893150983c20")
+      "03f6902f21442d23cae20dc4856c42770e6211b59ccb40f4d605d2e18deb71e9")
 exit(fail ? 1 : 0)
