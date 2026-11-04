@@ -180,6 +180,7 @@ actor FindMyClient {
 
     /// Cookies from the sign-in web view.
     func adopt(_ new: [HTTPCookie]) {
+        UserDefaults.standard.set(true, forKey: "fmWebSignIn")
         cookies = new.filter { $0.domain.contains("icloud.com") || $0.domain.contains("apple.com") }
         dsid = nil
         root = nil
@@ -254,7 +255,8 @@ actor FindMyClient {
             let (data, http) = try await send(c.url!, body: Data(body.utf8))
             if [401, 421, 450].contains(http.statusCode) {
                 FindMyLog.log("refreshClient -> HTTP \(http.statusCode)")
-                if attempt == 0 {
+                if attempt == 0, http.statusCode != 450 {
+                    // Maybe only the server address moved; validate is a cheap check, not a sign-in.
                     self.root = nil; self.dsid = nil
                     try await validate()
                     continue
@@ -296,7 +298,7 @@ actor FindMyClient {
     private static let widgetKey = "d39ba9916b7251055b22c7f910e2ea796ee65e98b2ddecea8f5dde8d9d1a815d"
     private var scnt = ""
     private var authSessionID = ""
-    private var sessionToken = ""
+    private var sessionToken = UserDefaults.standard.string(forKey: "fmSessionToken") ?? ""
     private var trustToken = UserDefaults.standard.string(forKey: "fmTrust") ?? ""
     private var accountCountry = ""
     private var authAttributes = ""
@@ -498,14 +500,29 @@ actor FindMyClient {
         root = url.replacingOccurrences(of: ":443", with: "")
         webMode = false
         UserDefaults.standard.set(false, forKey: "fmWebMode")
+        UserDefaults.standard.set(false, forKey: "fmWebSignIn")
+        UserDefaults.standard.set(sessionToken, forKey: "fmSessionToken")
         save()
         FindMyLog.log("Signed in natively. Find My server: \(URL(string: root ?? "")?.host ?? "?")")
     }
 
-    /// Re-sign-in with the saved Apple ID and password; Apple's trust token skips the 2FA code.
-    func silentRelogin() async -> Bool {
+    /// Each fresh sign-in makes Apple email "signed in to iCloud via a web browser", so this is
+    /// rationed: at most once every 6 hours unless you asked for it (pull to refresh in the app).
+    /// It first reuses Apple's session token (no password), then the saved password.
+    func silentRelogin(userAsked: Bool) async -> Bool {
+        let last = UserDefaults.standard.object(forKey: "fmLastRelogin") as? Date ?? .distantPast
+        if !userAsked, Date().timeIntervalSince(last) < 6 * 3600 {
+            FindMyLog.log("Session needs a new sign-in; holding off until \((last + 6 * 3600).formatted(date: .omitted, time: .shortened)) to avoid Apple sign-in emails")
+            return false
+        }
+        UserDefaults.standard.set(Date(), forKey: "fmLastRelogin")
+        if !sessionToken.isEmpty {
+            FindMyLog.log("Renewing the iCloud session with the saved token")
+            do { try await finishLogin(); return true }
+            catch { FindMyLog.log("Token renewal failed: \(error.localizedDescription)") }
+        }
         guard let id = UserDefaults.standard.string(forKey: "fmAppleID"), let pw = FMKeychain.get(id) else { return false }
-        FindMyLog.log("Session expired, signing in again with the saved login")
+        FindMyLog.log("Signing in again with the saved Apple ID")
         do {
             if case .signedIn = try await login(appleID: id, password: pw) { return true }
             FindMyLog.log("Apple wants a new code; sign in again from the Devices tab")
@@ -530,7 +547,9 @@ actor FindMyClient {
     private func send(_ url: URL, body: Data?) async throws -> (Data, FMStatus) {
         if webMode { return try await viaWeb(url, body: body) }
         let (data, http) = try await sendNative(url, body: body)
-        if [401, 421, 450].contains(http.statusCode) {
+        // Only for sessions that came from Apple's web page. A native sign-in never loads
+        // icloud.com in the background (each page load can count as a new browser sign-in).
+        if [401, 421, 450].contains(http.statusCode), UserDefaults.standard.bool(forKey: "fmWebSignIn") {
             FindMyLog.log("Native call got HTTP \(http.statusCode), trying from the iCloud page")
             if let (d2, st) = try? await viaWeb(url, body: body), st.statusCode == 200 {
                 webMode = true

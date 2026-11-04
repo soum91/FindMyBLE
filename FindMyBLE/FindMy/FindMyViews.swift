@@ -250,12 +250,12 @@ struct DevicesTab: View {
             }
             .navigationTitle("Devices")
             .navigationBarTitleDisplayMode(.inline)
-            .refreshable { await fm.refresh(polls: 4) }
+            .refreshable { await fm.refresh(polls: 4, userAsked: true) }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         if fm.signedIn {
-                            Button("Refresh", systemImage: "arrow.clockwise") { Task { await fm.refresh(polls: 4) } }
+                            Button("Refresh", systemImage: "arrow.clockwise") { Task { await fm.refresh(polls: 4, userAsked: true) } }
                             Button("Check for Left-Behind Now", systemImage: "location.magnifyingglass") {
                                 Task { await fm.check("manual", force: true) }
                             }

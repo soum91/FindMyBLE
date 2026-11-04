@@ -101,7 +101,7 @@ final class MovementMonitor: NSObject, CLLocationManagerDelegate {
                            horizontalAccuracy: max(visit.horizontalAccuracy, 20), verticalAccuracy: -1,
                            timestamp: visit.departureDate == .distantFuture ? visit.arrivalDate : visit.departureDate)
         add(c)
-        Task { @MainActor in FindMyStore.shared.requestCheck("visit") }
+        Task { @MainActor in FindMyStore.shared.requestCheck("visit", force: true) }
     }
 }
 
@@ -232,7 +232,7 @@ final class FindMyStore: ObservableObject {
 
     // MARK: Refresh
 
-    func refresh(polls: Int = 3) async {
+    func refresh(polls: Int = 3, userAsked: Bool = false) async {
         guard signedIn, !refreshing else { return }
         refreshing = true
         defer { refreshing = false }
@@ -241,14 +241,14 @@ final class FindMyStore: ObservableObject {
             apply(d)
             lastError = nil
         } catch FMError.expired {
-            if await client.silentRelogin(), let d = try? await client.devices(polls: polls) {
+            if await client.silentRelogin(userAsked: userAsked), let d = try? await client.devices(polls: polls) {
                 apply(d)
                 lastError = nil
                 return
             }
-            signedIn = false
-            lastError = FMError.expired.localizedDescription
-            FindMyLog.log("Session expired, sign in again")
+            // Keep the account; the next allowed renewal (or a pull to refresh) picks it back up.
+            lastError = "iCloud session expired. Pull down to renew it."
+            FindMyLog.log("Session expired")
         } catch {
             lastError = error.localizedDescription
             FindMyLog.log("Refresh failed: \(error.localizedDescription)")
@@ -265,14 +265,17 @@ final class FindMyStore: ObservableObject {
 
     // MARK: Left-behind check
 
-    func requestCheck(_ reason: String) {
-        Task { await check(reason) }
+    func requestCheck(_ reason: String, force: Bool = false) {
+        Task { await check(reason, force: force) }
+    }
     }
 
     /// Looks at where my devices are and where I am, and warns about any I seem to have left.
     func check(_ reason: String, force: Bool = false) async {
         guard signedIn, !checking else { return }
-        if !force, Date().timeIntervalSince(lastCheck) < 120 { return }
+        // Each check asks iCloud to locate every device; keep it to every 15 min for routine
+        // triggers. Leaving a place passes force.
+        if !force, Date().timeIntervalSince(lastCheck) < 15 * 60 { return }
         checking = true
         lastCheck = Date()
         var bg = UIBackgroundTaskIdentifier.invalid
