@@ -406,31 +406,43 @@ actor FindMyClient {
         hdr["Accept"] = "application/json"
         guard let (d, r) = try? await raw(URL(string: Self.authBase)!, method: "GET", headers: hdr, body: nil) else {
             FindMyLog.log("2FA info: request failed")
-            return [FMPhone(id: 1, label: "your trusted number")]
+            return []
         }
-        FindMyLog.log("2FA info -> HTTP \(r.statusCode): \(String(decoding: d.prefix(300), as: UTF8.self))")
-        let j = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
+        let j = ((try? JSONSerialization.jsonObject(with: d)) as? [String: Any]) ?? [:]
+        // Apple nests the numbers under "phoneNumberVerification".
+        let pv = (j["phoneNumberVerification"] as? [String: Any]) ?? j
+        var raws = (pv["trustedPhoneNumbers"] as? [[String: Any]]) ?? (j["trustedPhoneNumbers"] as? [[String: Any]]) ?? []
+        if raws.isEmpty, let one = (pv["trustedPhoneNumber"] ?? j["trustedPhoneNumber"]) as? [String: Any] { raws = [one] }
         var out: [FMPhone] = []
-        for p in (j?["trustedPhoneNumbers"] as? [[String: Any]]) ?? [] {
-            if let id = (p["id"] as? NSNumber)?.intValue {
-                out.append(FMPhone(id: id, label: (p["numberWithDialCode"] as? String) ?? "phone \(id)"))
-            }
-        }
-        if out.isEmpty, let p = j?["trustedPhoneNumber"] as? [String: Any], let id = (p["id"] as? NSNumber)?.intValue {
+        for p in raws {
+            guard let id = (p["id"] as? NSNumber)?.intValue else { continue }
+            let mode = (p["pushMode"] as? String) ?? "sms"
+            phoneModes[id] = mode
             out.append(FMPhone(id: id, label: (p["numberWithDialCode"] as? String) ?? "phone \(id)"))
         }
-        // Apple's first trusted number is id 1; offer it even if the list didn't parse.
-        return out.isEmpty ? [FMPhone(id: 1, label: "your trusted number")] : out
+        let sc = (pv["securityCode"] as? [String: Any]) ?? (j["securityCode"] as? [String: Any]) ?? [:]
+        FindMyLog.log("2FA info -> HTTP \(r.statusCode): numbers \(out.map { "id \($0.id) (\(phoneModes[$0.id] ?? "?"))" }.joined(separator: ", ")), trusted devices \(j["trustedDeviceCount"] ?? "?"), noTrustedDevices \(j["noTrustedDevices"] ?? "?"), tooManyCodesSent \(sc["tooManyCodesSent"] ?? "?"), locked \(sc["securityCodeLocked"] ?? sc["tooManyCodesValidated"] ?? "?")")
+        return out
     }
+
+    private var phoneModes: [Int: String] = [:]
 
     /// Ask Apple to text the code to one of the trusted numbers.
     func textCode(phoneID: Int) async throws {
-        let body = try JSONSerialization.data(withJSONObject: ["phoneNumber": ["id": phoneID], "mode": "sms"] as [String: Any])
+        let mode = phoneModes[phoneID] ?? "sms"
+        let body = try JSONSerialization.data(withJSONObject: ["phoneNumber": ["id": phoneID], "mode": mode] as [String: Any])
         var hdr = authHeaders()
         hdr["Accept"] = "application/json"
         let (d, r) = try await raw(URL(string: Self.authBase + "/verify/phone")!, method: "PUT", headers: hdr, body: body)
-        FindMyLog.log("text code -> HTTP \(r.statusCode): \(String(decoding: d.prefix(200), as: UTF8.self))")
-        guard (200...204).contains(r.statusCode) else { throw FMError.bad("Apple wouldn't send the text (HTTP \(r.statusCode)).") }
+        let j = ((try? JSONSerialization.jsonObject(with: d)) as? [String: Any]) ?? [:]
+        let msg = ((j["serviceErrors"] as? [[String: Any]])?.first?["message"] as? String) ?? ""
+        FindMyLog.log("text code to id \(phoneID) (\(mode)) -> HTTP \(r.statusCode) \(msg)")
+        if r.statusCode == 423 {
+            throw FMError.bad(msg.isEmpty ? "Apple has stopped sending codes to this number for now (too many requests). Wait a few hours, then try once." : msg)
+        }
+        guard (200...204).contains(r.statusCode) else {
+            throw FMError.bad(msg.isEmpty ? "Apple wouldn't send the text (HTTP \(r.statusCode))." : msg)
+        }
     }
 
     /// Step 2: the 6-digit code, from a trusted device or (with `phoneID`) from a text.
@@ -440,7 +452,7 @@ actor FindMyClient {
         let obj: [String: Any]
         if let phoneID {
             url = "/verify/phone/securitycode"
-            obj = ["phoneNumber": ["id": phoneID], "securityCode": ["code": clean], "mode": "sms"]
+            obj = ["phoneNumber": ["id": phoneID], "securityCode": ["code": clean], "mode": phoneModes[phoneID] ?? "sms"]
         } else {
             url = "/verify/trusteddevice/securitycode"
             obj = ["securityCode": ["code": clean]]
