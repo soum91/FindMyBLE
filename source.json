@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.35",
+          "buildVersion": "35",
+          "date": "2026-11-04T04:35:41Z",
+          "localizedDescription": "- feat: share Find My and LARQ battery readings with VoltScope (d8b152a)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.35/FindMyBLE-1.0-build-35.ipa",
+          "size": 1256353,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.34",
           "buildVersion": "34",
           "date": "2026-11-04T04:18:44Z",
@@ -209,11 +218,11 @@
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.34",
-      "versionDate": "2026-11-04T04:18:44Z",
-      "versionDescription": "- Find My sign-in: icloud.com origin like pyicloud, echo auth attributes, show Apple's answers on the sign-in screen (28818ce)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.34/FindMyBLE-1.0-build-34.ipa",
-      "size": 1241098,
+      "version": "1.0.35",
+      "versionDate": "2026-11-04T04:35:41Z",
+      "versionDescription": "- feat: share Find My and LARQ battery readings with VoltScope (d8b152a)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.35/FindMyBLE-1.0-build-35.ipa",
+      "size": 1256353,
       "appPermissions": {}
     }
   ],
