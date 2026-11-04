@@ -299,24 +299,27 @@ actor FindMyClient {
     private var sessionToken = ""
     private var trustToken = UserDefaults.standard.string(forKey: "fmTrust") ?? ""
     private var accountCountry = ""
+    private var authAttributes = ""
 
     private func authHeaders(json: Bool = true) -> [String: String] {
         var h = [
             "Accept": json ? "application/json" : "*/*",
             "Content-Type": "application/json",
-            "Origin": "https://idmsa.apple.com",
-            "Referer": "https://idmsa.apple.com/",
+            // Same as pyicloud, which signs in this way every day: the page is icloud.com.
+            "Origin": FMConst.origin,
+            "Referer": FMConst.origin + "/",
             "X-Apple-OAuth-Client-Id": Self.widgetKey,
             "X-Apple-OAuth-Client-Type": "firstPartyAuth",
             "X-Apple-OAuth-Redirect-URI": FMConst.origin,
             "X-Apple-OAuth-Require-Grant-Code": "true",
             "X-Apple-OAuth-Response-Mode": "web_message",
             "X-Apple-OAuth-Response-Type": "code",
-            "X-Apple-OAuth-State": clientId,
+            "X-Apple-OAuth-State": "auth-" + clientId,
             "X-Apple-Widget-Key": Self.widgetKey,
         ]
         if !scnt.isEmpty { h["scnt"] = scnt }
         if !authSessionID.isEmpty { h["X-Apple-ID-Session-Id"] = authSessionID }
+        if !authAttributes.isEmpty { h["X-Apple-Auth-Attributes"] = authAttributes }
         return h
     }
 
@@ -329,6 +332,7 @@ actor FindMyClient {
             UserDefaults.standard.set(v, forKey: "fmTrust")
         }
         if let v = http.value(forHTTPHeaderField: "X-Apple-ID-Account-Country") { accountCountry = v }
+        if let v = http.value(forHTTPHeaderField: "X-Apple-Auth-Attributes") { authAttributes = v }
     }
 
     private func raw(_ url: URL, method: String, headers: [String: String], body: Data?) async throws -> (Data, HTTPURLResponse) {
@@ -353,7 +357,7 @@ actor FindMyClient {
     /// Step 1: password. Returns .signedIn, or .needsCode when Apple wants the 2FA code.
     func login(appleID: String, password: String) async throws -> FMLoginResult {
         let id = appleID.trimmingCharacters(in: .whitespacesAndNewlines)
-        scnt = ""; authSessionID = ""; sessionToken = ""
+        scnt = ""; authSessionID = ""; sessionToken = ""; authAttributes = ""
         cookies = []
         let srp = SRP.Client()
         let initBody: [String: Any] = ["a": b64(srp.A.bytes), "accountName": id, "protocols": ["s2k", "s2k_fo"]]
@@ -384,6 +388,7 @@ actor FindMyClient {
             try await finishLogin()
             return .signedIn
         case 409:
+            FindMyLog.log("2FA needed: \(String(decoding: d2.prefix(200), as: UTF8.self)) scnt:\(scnt.isEmpty ? "no" : "yes") session:\(authSessionID.isEmpty ? "no" : "yes")")
             let phones = await twoFactorOptions()
             return .needsCode(phones)
         case 401:
@@ -421,8 +426,10 @@ actor FindMyClient {
     /// Ask Apple to text the code to one of the trusted numbers.
     func textCode(phoneID: Int) async throws {
         let body = try JSONSerialization.data(withJSONObject: ["phoneNumber": ["id": phoneID], "mode": "sms"] as [String: Any])
-        let (_, r) = try await raw(URL(string: Self.authBase + "/verify/phone")!, method: "PUT", headers: authHeaders(), body: body)
-        FindMyLog.log("text code -> HTTP \(r.statusCode)")
+        var hdr = authHeaders()
+        hdr["Accept"] = "application/json"
+        let (d, r) = try await raw(URL(string: Self.authBase + "/verify/phone")!, method: "PUT", headers: hdr, body: body)
+        FindMyLog.log("text code -> HTTP \(r.statusCode): \(String(decoding: d.prefix(200), as: UTF8.self))")
         guard (200...204).contains(r.statusCode) else { throw FMError.bad("Apple wouldn't send the text (HTTP \(r.statusCode)).") }
     }
 

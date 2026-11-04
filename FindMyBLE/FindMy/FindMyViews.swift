@@ -61,6 +61,7 @@ struct ICloudWebView: UIViewRepresentable {
 struct FindMyLoginView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var fm = FindMyStore.shared
+    @ObservedObject var log = FindMyLog.shared
     @State private var appleID = UserDefaults.standard.string(forKey: "fmAppleID") ?? ""
     @State private var password = ""
     @State private var code = ""
@@ -116,6 +117,14 @@ struct FindMyLoginView: View {
                 }
                 if let e = error {
                     Section { Text(e).foregroundStyle(.red) }
+                }
+                // What Apple answered, right here, so there's no digging for the log.
+                if !log.lines.isEmpty {
+                    Section("What Apple said") {
+                        Text(log.lines.suffix(8).reversed().joined(separator: "\n"))
+                            .font(.system(size: 10, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
                 }
                 Section {
                     Button("Use Apple's web page instead") { showWeb = true }
