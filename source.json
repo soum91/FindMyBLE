@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.40",
+          "buildVersion": "40",
+          "date": "2026-11-04T18:48:01Z",
+          "localizedDescription": "- Fix stray brace in FindMyStore that broke build 37 (99535d7)\n- CI: back to macos-15 runners (8246dd9)\n- CI: build on Intel macOS runners while arm64 ones are out of capacity (95ee966)\n- Find My: stop repeated iCloud sign-ins (Apple emails each one) (97d5a50)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.40/FindMyBLE-1.0-build-40.ipa",
+          "size": 1260176,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.36",
           "buildVersion": "36",
           "date": "2026-11-04T04:46:48Z",
@@ -227,11 +236,11 @@
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.36",
-      "versionDate": "2026-11-04T04:46:48Z",
-      "versionDescription": "- Find My 2FA: read Apple's nested phone list (real number id), show Apple's own error text, explain 423 lockout (5039db9)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.36/FindMyBLE-1.0-build-36.ipa",
-      "size": 1258996,
+      "version": "1.0.40",
+      "versionDate": "2026-11-04T18:48:01Z",
+      "versionDescription": "- Fix stray brace in FindMyStore that broke build 37 (99535d7)\n- CI: back to macos-15 runners (8246dd9)\n- CI: build on Intel macOS runners while arm64 ones are out of capacity (95ee966)\n- Find My: stop repeated iCloud sign-ins (Apple emails each one) (97d5a50)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.40/FindMyBLE-1.0-build-40.ipa",
+      "size": 1260176,
       "appPermissions": {}
     }
   ],
