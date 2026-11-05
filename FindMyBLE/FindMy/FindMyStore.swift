@@ -112,7 +112,7 @@ final class FindMyStore: ObservableObject {
     static let shared = FindMyStore()
 
     struct Watch: Codable, Equatable {
-        var enabled = true
+        var enabled = false
         /// Alert once the device is this far from me (metres).
         var threshold: Double = 150
         /// Also alert for a device that normally stays put (a Mac at home). Off: only devices that travel with me.
