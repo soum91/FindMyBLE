@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.43",
+          "buildVersion": "43",
+          "date": "2026-11-05T01:13:04Z",
+          "localizedDescription": "- Find My: reset saved device watches once so only the LARQ bottle alerts by default (fbe5201)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.43/FindMyBLE-1.0-build-43.ipa",
+          "size": 1260434,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.42",
           "buildVersion": "42",
           "date": "2026-11-05T01:08:40Z",
@@ -234,22 +243,13 @@
           "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.15/FindMyBLE-1.0-build-15.ipa",
           "size": 443184,
           "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.0",
-          "buildVersion": "14",
-          "date": "2026-10-20T18:51:21Z",
-          "localizedDescription": "- CI: publish an AltStore-format source for FlareStore / AltStore / SideStore (a16ac7c)\n- Backfill script: repair mis-tagged releases [skip ci] (5720441)",
-          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.14/FindMyBLE-1.0-build-14.ipa",
-          "size": 425700,
-          "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.42",
-      "versionDate": "2026-11-05T01:08:40Z",
-      "versionDescription": "- Find My: Apple devices are off by default; only the LARQ bottle alerts unless you turn a device on (de90ecc)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.42/FindMyBLE-1.0-build-42.ipa",
-      "size": 1260284,
+      "version": "1.0.43",
+      "versionDate": "2026-11-05T01:13:04Z",
+      "versionDescription": "- Find My: reset saved device watches once so only the LARQ bottle alerts by default (fbe5201)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.43/FindMyBLE-1.0-build-43.ipa",
+      "size": 1260434,
       "appPermissions": {}
     }
   ],
