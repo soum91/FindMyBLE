@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.45",
+          "buildVersion": "45",
+          "date": "2026-11-05T15:15:34Z",
+          "localizedDescription": "- Find My: no automatic password sign-ins, keep iCloud cookies intact, Renew session button (5638851)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.45/FindMyBLE-1.0-build-45.ipa",
+          "size": 1257791,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.44",
           "buildVersion": "44",
           "date": "2026-11-05T15:08:16Z",
@@ -234,22 +243,13 @@
           "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.17/FindMyBLE-1.0-build-17.ipa",
           "size": 472004,
           "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.0",
-          "buildVersion": "16",
-          "date": "2026-10-20T19:10:41Z",
-          "localizedDescription": "- Trusted places get a mode: remind if you leave without the item (528186b)",
-          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.16/FindMyBLE-1.0-build-16.ipa",
-          "size": 455572,
-          "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.44",
-      "versionDate": "2026-11-05T15:08:16Z",
-      "versionDescription": "- Widget: static configuration and link buttons so it renders on iOS 27 sideloads (971116c)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.44/FindMyBLE-1.0-build-44.ipa",
-      "size": 1254930,
+      "version": "1.0.45",
+      "versionDate": "2026-11-05T15:15:34Z",
+      "versionDescription": "- Find My: no automatic password sign-ins, keep iCloud cookies intact, Renew session button (5638851)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.45/FindMyBLE-1.0-build-45.ipa",
+      "size": 1257791,
       "appPermissions": {}
     }
   ],
