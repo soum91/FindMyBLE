@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.42",
+          "buildVersion": "42",
+          "date": "2026-11-05T01:08:40Z",
+          "localizedDescription": "- Find My: Apple devices are off by default; only the LARQ bottle alerts unless you turn a device on (de90ecc)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.42/FindMyBLE-1.0-build-42.ipa",
+          "size": 1260284,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.41",
           "buildVersion": "41",
           "date": "2026-11-05T00:57:10Z",
@@ -234,22 +243,13 @@
           "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.14/FindMyBLE-1.0-build-14.ipa",
           "size": 425700,
           "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.0",
-          "buildVersion": "13",
-          "date": "2026-10-20T18:47:41Z",
-          "localizedDescription": "- Info.plist: take version and build number from MARKETING_VERSION / CURRENT_PROJECT_VERSION (8f81633)",
-          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.13/FindMyBLE-1.0-build-13.ipa",
-          "size": 425701,
-          "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.41",
-      "versionDate": "2026-11-05T00:57:10Z",
-      "versionDescription": "- Find My: don't alert on stale or offline device locations (a20b6e4)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.41/FindMyBLE-1.0-build-41.ipa",
-      "size": 1260262,
+      "version": "1.0.42",
+      "versionDate": "2026-11-05T01:08:40Z",
+      "versionDescription": "- Find My: Apple devices are off by default; only the LARQ bottle alerts unless you turn a device on (de90ecc)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.42/FindMyBLE-1.0-build-42.ipa",
+      "size": 1260284,
       "appPermissions": {}
     }
   ],
