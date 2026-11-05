@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.41",
+          "buildVersion": "41",
+          "date": "2026-11-05T00:57:10Z",
+          "localizedDescription": "- Find My: don't alert on stale or offline device locations (a20b6e4)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.41/FindMyBLE-1.0-build-41.ipa",
+          "size": 1260262,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.40",
           "buildVersion": "40",
           "date": "2026-11-04T18:48:01Z",
@@ -236,11 +245,11 @@
           "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.40",
-      "versionDate": "2026-11-04T18:48:01Z",
-      "versionDescription": "- Fix stray brace in FindMyStore that broke build 37 (99535d7)\n- CI: back to macos-15 runners (8246dd9)\n- CI: build on Intel macOS runners while arm64 ones are out of capacity (95ee966)\n- Find My: stop repeated iCloud sign-ins (Apple emails each one) (97d5a50)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.40/FindMyBLE-1.0-build-40.ipa",
-      "size": 1260176,
+      "version": "1.0.41",
+      "versionDate": "2026-11-05T00:57:10Z",
+      "versionDescription": "- Find My: don't alert on stale or offline device locations (a20b6e4)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.41/FindMyBLE-1.0-build-41.ipa",
+      "size": 1260262,
       "appPermissions": {}
     }
   ],
