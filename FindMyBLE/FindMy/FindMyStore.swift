@@ -324,7 +324,9 @@ final class FindMyStore: ObservableObject {
                 FindMyLog.log(line + ", with me")
                 continue
             }
-            guard age < 12 * 3600 else { FindMyLog.log(line + ", too old to judge"); continue }
+            // An old fix only says where it was hours ago, not where it is now. Offline devices
+            // (dead battery, airplane mode) keep their last fix forever, so only fresh ones count.
+            guard age < 20 * 60 else { FindMyLog.log(line + ", fix too old to judge (\(d.online ? "online" : "offline"))"); continue }
             guard gap > w.threshold else { FindMyLog.log(line + ", under \(Int(w.threshold)) m"); continue }
             if !w.always {
                 guard let c = carried[d.id], Date().timeIntervalSince(c) < 24 * 3600 else {
