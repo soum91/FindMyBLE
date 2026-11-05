@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.44",
+          "buildVersion": "44",
+          "date": "2026-11-05T15:08:16Z",
+          "localizedDescription": "- Widget: static configuration and link buttons so it renders on iOS 27 sideloads (971116c)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.44/FindMyBLE-1.0-build-44.ipa",
+          "size": 1254930,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.43",
           "buildVersion": "43",
           "date": "2026-11-05T01:13:04Z",
@@ -234,22 +243,13 @@
           "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.16/FindMyBLE-1.0-build-16.ipa",
           "size": 455572,
           "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.0",
-          "buildVersion": "15",
-          "date": "2026-10-20T19:03:34Z",
-          "localizedDescription": "- Trusted locations, mute return alerts, build number + changelog in releases (fd549b3)",
-          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.15/FindMyBLE-1.0-build-15.ipa",
-          "size": 443184,
-          "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.43",
-      "versionDate": "2026-11-05T01:13:04Z",
-      "versionDescription": "- Find My: reset saved device watches once so only the LARQ bottle alerts by default (fbe5201)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.43/FindMyBLE-1.0-build-43.ipa",
-      "size": 1260434,
+      "version": "1.0.44",
+      "versionDate": "2026-11-05T15:08:16Z",
+      "versionDescription": "- Widget: static configuration and link buttons so it renders on iOS 27 sideloads (971116c)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.44/FindMyBLE-1.0-build-44.ipa",
+      "size": 1254930,
       "appPermissions": {}
     }
   ],
