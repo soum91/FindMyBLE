@@ -140,6 +140,13 @@ final class FindMyStore: ObservableObject {
     private init() {
         devices = load([FMDevice].self, "fmDevices") ?? []
         watch = load([String: Watch].self, "fmWatch") ?? [:]
+        // Older builds watched every Apple device by default and saved that on any tweak.
+        // Reset once so nothing alerts until it's turned on by hand; the LARQ bottle is unaffected.
+        if !defaults.bool(forKey: "fmWatchOptIn") {
+            watch = [:]
+            save(watch, "fmWatch")
+            defaults.set(true, forKey: "fmWatchOptIn")
+        }
         carried = load([String: Date].self, "fmCarried") ?? [:]
         alerted = load([String: Date].self, "fmAlerted") ?? [:]
         lastObs = load([String: Obs].self, "fmObs") ?? [:]
