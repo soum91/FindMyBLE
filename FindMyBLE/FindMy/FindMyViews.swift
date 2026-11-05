@@ -241,7 +241,15 @@ struct DevicesTab: View {
                         }
                     } footer: {
                         if let e = fm.lastError {
-                            Text(e).foregroundStyle(.orange)
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(e).foregroundStyle(.orange)
+                                if fm.expired {
+                                    Button("Renew session", systemImage: "arrow.triangle.2.circlepath") {
+                                        Task { await fm.refresh(polls: 4, userAsked: true) }
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                }
+                            }
                         } else if let t = fm.lastRefresh {
                             Text("Updated \(t.formatted(.relative(presentation: .named))). Alerts need Location set to Always.")
                         }
@@ -250,12 +258,12 @@ struct DevicesTab: View {
             }
             .navigationTitle("Devices")
             .navigationBarTitleDisplayMode(.inline)
-            .refreshable { await fm.refresh(polls: 4, userAsked: true) }
+            .refreshable { await fm.refresh(polls: 4) }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         if fm.signedIn {
-                            Button("Refresh", systemImage: "arrow.clockwise") { Task { await fm.refresh(polls: 4, userAsked: true) } }
+                            Button("Refresh", systemImage: "arrow.clockwise") { Task { await fm.refresh(polls: 4) } }
                             Button("Check for Left-Behind Now", systemImage: "location.magnifyingglass") {
                                 Task { await fm.check("manual", force: true) }
                             }

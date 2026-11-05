@@ -158,7 +158,10 @@ actor FindMyClient {
     init() {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.httpShouldSetCookies = false
-        cfg.httpCookieAcceptPolicy = .never
+        // Let Foundation parse Set-Cookie into the session's own in-memory store; the combined
+        // header from allHeaderFields can mangle iCloud's rotating auth cookies, which expired the
+        // session early and forced the re-sign-ins Apple emails about.
+        cfg.httpCookieAcceptPolicy = .always
         cfg.timeoutIntervalForRequest = 20
         session = URLSession(configuration: cfg)
         if let s = UserDefaults.standard.string(forKey: "fmClientId") {
@@ -255,7 +258,7 @@ actor FindMyClient {
             let (data, http) = try await send(c.url!, body: Data(body.utf8))
             if [401, 421, 450].contains(http.statusCode) {
                 FindMyLog.log("refreshClient -> HTTP \(http.statusCode)")
-                if attempt == 0, http.statusCode != 450 {
+                if attempt == 0 {
                     // Maybe only the server address moved; validate is a cheap check, not a sign-in.
                     self.root = nil; self.dsid = nil
                     try await validate()
@@ -506,13 +509,13 @@ actor FindMyClient {
         FindMyLog.log("Signed in natively. Find My server: \(URL(string: root ?? "")?.host ?? "?")")
     }
 
-    /// Each fresh sign-in makes Apple email "signed in to iCloud via a web browser", so this is
-    /// rationed: at most once every 6 hours unless you asked for it (pull to refresh in the app).
-    /// It first reuses Apple's session token (no password), then the saved password.
+    /// Each fresh sign-in makes Apple email "signed in to iCloud via a web browser".
+    /// Automatic: only the saved session token, at most once a day, never the password.
+    /// The password is only used when you tap Renew session.
     func silentRelogin(userAsked: Bool) async -> Bool {
         let last = UserDefaults.standard.object(forKey: "fmLastRelogin") as? Date ?? .distantPast
-        if !userAsked, Date().timeIntervalSince(last) < 6 * 3600 {
-            FindMyLog.log("Session needs a new sign-in; holding off until \((last + 6 * 3600).formatted(date: .omitted, time: .shortened)) to avoid Apple sign-in emails")
+        if !userAsked, Date().timeIntervalSince(last) < 24 * 3600 {
+            FindMyLog.log("Session expired; not signing in again automatically (last renewal \(last.formatted(date: .abbreviated, time: .shortened))). Tap Renew session.")
             return false
         }
         UserDefaults.standard.set(Date(), forKey: "fmLastRelogin")
@@ -521,6 +524,7 @@ actor FindMyClient {
             do { try await finishLogin(); return true }
             catch { FindMyLog.log("Token renewal failed: \(error.localizedDescription)") }
         }
+        guard userAsked else { return false }
         guard let id = UserDefaults.standard.string(forKey: "fmAppleID"), let pw = FMKeychain.get(id) else { return false }
         FindMyLog.log("Signing in again with the saved Apple ID")
         do {
@@ -585,7 +589,12 @@ actor FindMyClient {
             if let k = k as? String, let v = v as? String { fields[k] = v }
         }
         let fresh = HTTPCookie.cookies(withResponseHeaderFields: fields, for: url)
-        if !fresh.isEmpty { merge(fresh) }
+        let stored = session.configuration.httpCookieStorage?.cookies(for: url) ?? []
+        if !fresh.isEmpty || !stored.isEmpty {
+            merge(fresh + stored)
+            let names = Set(fresh.map(\.name)).sorted()
+            if !names.isEmpty { FindMyLog.log("\(url.lastPathComponent) set cookies: \(names.joined(separator: ", "))") }
+        }
         return (data, http)
     }
 

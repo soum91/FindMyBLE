@@ -126,6 +126,7 @@ final class FindMyStore: ObservableObject {
     @Published private(set) var refreshing = false
     @Published private(set) var lastRefresh: Date?
     @Published private(set) var lastError: String?
+    @Published private(set) var expired = false
     @Published private(set) var watch: [String: Watch] = [:]
 
     /// When each device last moved while I was next to it.
@@ -254,7 +255,8 @@ final class FindMyStore: ObservableObject {
                 return
             }
             // Keep the account; the next allowed renewal (or a pull to refresh) picks it back up.
-            lastError = "iCloud session expired. Pull down to renew it."
+            expired = true
+            lastError = "iCloud session expired. Tap Renew session. Apple emails you about each renewal."
             FindMyLog.log("Session expired")
         } catch {
             lastError = error.localizedDescription
@@ -263,6 +265,7 @@ final class FindMyStore: ObservableObject {
     }
 
     private func apply(_ d: [FMDevice]) {
+        expired = false
         devices = d
         lastRefresh = Date()
         defaults.set(lastRefresh, forKey: "fmLastRefresh")
