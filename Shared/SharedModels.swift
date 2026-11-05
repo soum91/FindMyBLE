@@ -217,7 +217,7 @@ enum MapFiles {
 }
 
 enum WidgetKinds {
-    static let item = "FindMyBLE.item"
+    static let item = "FindMyBLE.itemV2"   // new kind: drops the old configurable widget's stuck state
     static let water = "FindMyBLE.water"
 }
 

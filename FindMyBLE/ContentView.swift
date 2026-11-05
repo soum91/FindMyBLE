@@ -45,7 +45,9 @@ struct ContentView: View {
         // Tapping the item widget opens here with the map on that item.
         .onOpenURL { url in
             guard url.scheme == "findmyble" else { return }
-            if url.host == "battery-export" {
+            if url.host == "water" {
+                WaterLog.add()   // the widgets' + opens the app to log, since intent buttons don't run on this iOS
+            } else if url.host == "battery-export" {
                 BatteryHandoff.openVoltScope()
             } else if let id = UUID(uuidString: url.lastPathComponent) {
                 focus(id)

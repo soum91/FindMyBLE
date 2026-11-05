@@ -16,15 +16,6 @@ struct FindMyBLEWidgets: WidgetBundle {
     }
 }
 
-// MARK: - Item picker
-
-struct SelectItemIntent: WidgetConfigurationIntent {
-    static var title: LocalizedStringResource = "Item"
-    static var description = IntentDescription("Pick which item this widget shows.")
-    @Parameter(title: "Item") var item: ItemEntity?
-    init() {}
-}
-
 // MARK: - Item widget
 
 struct ItemEntry: TimelineEntry {
@@ -35,36 +26,27 @@ struct ItemEntry: TimelineEntry {
     let shared: Bool
 }
 
-struct ItemProvider: AppIntentTimelineProvider {
-    func placeholder(in context: Context) -> ItemEntry {
-        ItemEntry(date: .now, item: .preview, water: WaterLog(), unit: .localeDefault, shared: true)
-    }
-
-    func snapshot(for config: SelectItemIntent, in context: Context) async -> ItemEntry {
-        context.isPreview && SharedSnapshot.load().items.isEmpty
-            ? placeholder(in: context)
-            : await entry(config, context)
-    }
-
-    func timeline(for config: SelectItemIntent, in context: Context) async -> Timeline<ItemEntry> {
+// Built the DewPoint way, the only widget style that renders on iOS 27 betas with these
+// sideloaded builds: static configuration, cached data only, no intent buttons. A configurable
+// (AppIntentConfiguration) widget never got a timeline and sat on its grey placeholder.
+struct ItemProvider: TimelineProvider {
+    func placeholder(in context: Context) -> ItemEntry { Self.entry() }
+    func getSnapshot(in context: Context, completion: @escaping (ItemEntry) -> Void) { completion(Self.entry()) }
+    func getTimeline(in context: Context, completion: @escaping (Timeline<ItemEntry>) -> Void) {
         // The app pushes reloads when something changes; this is just a safety refresh.
-        Timeline(entries: [await entry(config, context)], policy: .after(.now.addingTimeInterval(30 * 60)))
+        completion(Timeline(entries: [Self.entry()], policy: .after(.now.addingTimeInterval(15 * 60))))
     }
 
-    private func entry(_ config: SelectItemIntent, _ context: Context) async -> ItemEntry {
+    static func entry() -> ItemEntry {
         let snap = SharedSnapshot.load()
-        let item = snap.items.first { $0.id.uuidString == config.item?.id } ?? snap.items.first
-        // The timeline holds only small value types. Image I/O and UIKit image creation are
-        // delayed until the medium widget actually draws, avoiding two retained map images
-        // in the already memory-constrained timeline extension.
-        return ItemEntry(date: .now, item: item, water: WaterLog.load(), unit: snap.distanceUnit,
+        return ItemEntry(date: .now, item: snap.items.first, water: WaterLog.load(), unit: snap.distanceUnit,
                          shared: AppGroup.isShared)
     }
 }
 
 struct ItemWidget: Widget {
     var body: some WidgetConfiguration {
-        AppIntentConfiguration(kind: WidgetKinds.item, intent: SelectItemIntent.self, provider: ItemProvider()) { e in
+        StaticConfiguration(kind: WidgetKinds.item, provider: ItemProvider()) { e in
             ItemWidgetView(e: e)
         }
         .configurationDisplayName("Item")
@@ -150,12 +132,10 @@ struct ItemWidgetView: View {
                         .gaugeStyle(.accessoryLinearCapacity)
                         .tint(.blue)
                     Text(e.unit.volume(e.water.total())).font(.caption2.weight(.semibold)).monospacedDigit()
-                    Button(intent: LogWaterIntent()) {
-                        Image(systemName: "plus").font(.caption.weight(.bold))
+                    Link(destination: URL(string: "findmyble://water/add")!) {
+                        Image(systemName: "plus").font(.caption.weight(.bold)).foregroundStyle(.white)
+                            .frame(width: 28, height: 28).background(Circle().fill(.blue))
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.blue)
-                    .buttonBorderShape(.circle)
                 }
             }
             .padding(12)
@@ -343,13 +323,12 @@ struct WaterWidgetView: View {
                 }
                 .padding(.horizontal, 10)
             }
-            Button(intent: LogWaterIntent()) {
+            Link(destination: URL(string: "findmyble://water/add")!) {
                 Label("+\(e.unit.volume(e.water.glass))", systemImage: "plus")
-                    .font(.caption.weight(.semibold))
-                    .frame(maxWidth: .infinity)
+                    .font(.caption.weight(.semibold)).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity).padding(.vertical, 6)
+                    .background(Capsule().fill(.blue))
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.blue)
         }
     }
 }
