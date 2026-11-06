@@ -707,6 +707,9 @@ struct MeTab: View {
                     Text("Don't force-quit FindMyBLE from the app switcher, or iOS stops waking it up for Bluetooth events. After a reboot, open it once.")
                         .font(.footnote).foregroundStyle(.secondary)
                 } header: { Text("Keep It Working") }
+                Section("About") {
+                    LabeledContent("Installed version", value: "\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown") (build \(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown"))")
+                }
             }
             .navigationTitle("Me")
             .alert("Name this place", isPresented: $showAddPlace) {
