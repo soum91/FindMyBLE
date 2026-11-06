@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.47",
+          "buildVersion": "47",
+          "date": "2026-11-06T20:57:42Z",
+          "localizedDescription": "- Enforce visible installed version/build across app releases (f5a4f7e)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.47/FindMyBLE-1.0-build-47.ipa",
+          "size": 1258067,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.46",
           "buildVersion": "46",
           "date": "2026-11-06T20:15:36Z",
@@ -234,22 +243,13 @@
           "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.19/FindMyBLE-1.0-build-19.ipa",
           "size": 550366,
           "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.0.18",
-          "buildVersion": "18",
-          "date": "2026-10-20T20:21:53Z",
-          "localizedDescription": "- CI: version string carries the build number (<version>.<build>) (a0aa730)",
-          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.18/FindMyBLE-1.0-build-18.ipa",
-          "size": 472003,
-          "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.46",
-      "versionDate": "2026-11-06T20:15:36Z",
-      "versionDescription": "- Show actual installed app version and build in UI (c0bf762)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.46/FindMyBLE-1.0-build-46.ipa",
-      "size": 1257990,
+      "version": "1.0.47",
+      "versionDate": "2026-11-06T20:57:42Z",
+      "versionDescription": "- Enforce visible installed version/build across app releases (f5a4f7e)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.47/FindMyBLE-1.0-build-47.ipa",
+      "size": 1258067,
       "appPermissions": {}
     }
   ],
