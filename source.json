@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.46",
+          "buildVersion": "46",
+          "date": "2026-11-06T20:15:36Z",
+          "localizedDescription": "- Show actual installed app version and build in UI (c0bf762)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.46/FindMyBLE-1.0-build-46.ipa",
+          "size": 1257990,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.45",
           "buildVersion": "45",
           "date": "2026-11-05T15:15:34Z",
@@ -234,22 +243,13 @@
           "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.18/FindMyBLE-1.0-build-18.ipa",
           "size": 472003,
           "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.0",
-          "buildVersion": "17",
-          "date": "2026-10-20T20:03:41Z",
-          "localizedDescription": "- Editable geofence size and a display name for the item (18b6659)",
-          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.17/FindMyBLE-1.0-build-17.ipa",
-          "size": 472004,
-          "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.45",
-      "versionDate": "2026-11-05T15:15:34Z",
-      "versionDescription": "- Find My: no automatic password sign-ins, keep iCloud cookies intact, Renew session button (5638851)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.45/FindMyBLE-1.0-build-45.ipa",
-      "size": 1257791,
+      "version": "1.0.46",
+      "versionDate": "2026-11-06T20:15:36Z",
+      "versionDescription": "- Show actual installed app version and build in UI (c0bf762)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.46/FindMyBLE-1.0-build-46.ipa",
+      "size": 1257990,
       "appPermissions": {}
     }
   ],
