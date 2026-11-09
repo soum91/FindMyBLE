@@ -33,3 +33,8 @@ Applies to Codex, Claude and all future diagnostic/debug/log reporting UI:
 - Export the full diagnostics, including actual installed app/build, OS/device, and actionable failure/return codes. Redact credentials, access tokens, passwords and other secrets. Do not upload reports without consent.
 - Test on a signed real device: Copy, paste into another app, Share and Save to Files, including error paths. If physical verification is unavailable, say so explicitly; a passing build is not evidence of clipboard success.
 - Prefer one reusable diagnostic export component per application. Ensure future releases and newly created repositories retain this rule in both AGENTS.md and CLAUDE.md.
+
+
+## Universal diagnostic export contract
+
+All generated diagnostic/log reports require verified Copy (read back clipboard where supported and show visible success/failure), independent native Share, native Save as plain `.txt` with system Files picker (`fileExporter` or `UIDocumentPickerViewController` on iOS), and selectable full report text fallback. No silent clipboard-only buttons. Include app/build, device/OS, actionable return/error codes and redact secrets. Verify cross-app paste, Share and Save on a signed device; otherwise mark unverified. Preserve other instructions.
