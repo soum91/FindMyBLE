@@ -8,3 +8,8 @@ Mandatory: retain a discoverable runtime **Installed version + build** display f
 ## Diagnostic/reporting rule for Claude
 
 Before implementing or changing any diagnostics or logs, follow the **Universal diagnostic copy and export contract** in `AGENTS.md`: verified Copy with visible feedback, native Share, native plain-text Files export, and complete selectable report. Avoid claiming these work until a signed-device paste and export check is complete.
+
+
+## Universal diagnostic export contract
+
+All generated diagnostic/log reports require verified Copy (read back clipboard where supported and show visible success/failure), independent native Share, native Save as plain `.txt` with system Files picker (`fileExporter` or `UIDocumentPickerViewController` on iOS), and selectable full report text fallback. No silent clipboard-only buttons. Include app/build, device/OS, actionable return/error codes and redact secrets. Verify cross-app paste, Share and Save on a signed device; otherwise mark unverified. Preserve other instructions.
