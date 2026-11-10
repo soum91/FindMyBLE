@@ -20,6 +20,15 @@
       "screenshotURLs": [],
       "versions": [
         {
+          "version": "1.0.48",
+          "buildVersion": "48",
+          "date": "2026-11-10T08:04:37Z",
+          "localizedDescription": "- Enforce pseudonymous author metadata and owner privacy (cd7be4c)\n- docs: require verified diagnostic exports [skip ci] (7f07917)\n- docs: require verified diagnostic exports [skip ci] (6b2dd61)\n- docs: require verified diagnostics Copy, Share and Files export [skip ci] (3463a21)\n- docs: require verified diagnostics Copy, Share and Files export [skip ci] (d9c72cc)\n- ci: separate release tracks when deriving factual changes [skip ci] (7c66b34)\n- ci: reconcile bot-created releases with factual notes [skip ci] (9aeb9ff)\n- ci: verify and record actual release changes [skip ci] (0b927c3)\n- docs: require evidence-based release changelog [skip ci] (d6ae276)\n- docs: initialize factual release changelog [skip ci] (bf65840)",
+          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.48/FindMyBLE-1.0-build-48.ipa",
+          "size": 1258073,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.47",
           "buildVersion": "47",
           "date": "2026-11-06T20:57:42Z",
@@ -234,22 +243,13 @@
           "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.20/FindMyBLE-1.0-build-20.ipa",
           "size": 556975,
           "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.0.19",
-          "buildVersion": "19",
-          "date": "2026-10-20T20:29:22Z",
-          "localizedDescription": "- Multiple items, per-item geofence slider and map rings, LARQ back in Add Item (afd08dd)",
-          "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.19/FindMyBLE-1.0-build-19.ipa",
-          "size": 550366,
-          "minOSVersion": "17.0"
         }
       ],
-      "version": "1.0.47",
-      "versionDate": "2026-11-06T20:57:42Z",
-      "versionDescription": "- Enforce visible installed version/build across app releases (f5a4f7e)",
-      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.47/FindMyBLE-1.0-build-47.ipa",
-      "size": 1258067,
+      "version": "1.0.48",
+      "versionDate": "2026-11-10T08:04:37Z",
+      "versionDescription": "- Enforce pseudonymous author metadata and owner privacy (cd7be4c)\n- docs: require verified diagnostic exports [skip ci] (7f07917)\n- docs: require verified diagnostic exports [skip ci] (6b2dd61)\n- docs: require verified diagnostics Copy, Share and Files export [skip ci] (3463a21)\n- docs: require verified diagnostics Copy, Share and Files export [skip ci] (d9c72cc)\n- ci: separate release tracks when deriving factual changes [skip ci] (7c66b34)\n- ci: reconcile bot-created releases with factual notes [skip ci] (9aeb9ff)\n- ci: verify and record actual release changes [skip ci] (0b927c3)\n- docs: require evidence-based release changelog [skip ci] (d6ae276)\n- docs: initialize factual release changelog [skip ci] (bf65840)",
+      "downloadURL": "https://github.com/soum91/FindMyBLE/releases/download/v1.0.48/FindMyBLE-1.0-build-48.ipa",
+      "size": 1258073,
       "appPermissions": {}
     }
   ],
