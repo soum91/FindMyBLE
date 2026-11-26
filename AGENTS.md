@@ -43,3 +43,7 @@ All generated diagnostic/log reports require verified Copy (read back clipboard 
 ## Public attribution and owner privacy
 
 Use `soum91` as the author, maintainer, developer, and publisher in all first-party metadata. Do not publish the owner's legal name, private email, or other personal identifiers in source, licenses, Sileo/FlareStore feeds, release assets, binary packages, generated docs, logs, or commits. Audit generated artifacts before publishing. Preserve legitimate third-party copyright notices. Existing bundle identifiers, app groups, and entitlements must not be silently changed, because doing so can break upgrades and stored data.
+
+## Mandatory file picker / import policy (release-blocking)
+
+Every file picker, file browser, import, export, signing or upload workflow in this repository **MUST** comply with the shared [MANDATORY_FILE_PICKER.md](https://github.com/soum91/tweaks/blob/main/MANDATORY_FILE_PICKER.md). This includes all future applications, extensions, and platforms. The native picker must accept a real tap, return a valid file handle/URL, stage and process it safely, show visible success or error, survive repeated selections, and pass end-to-end on-device testing. Merely opening Files or compiling is **not** evidence the picker works. Never claim this bug fixed without device verification. Keep existing project instructions unchanged. Codex, Claude, and other development agents must propagate this rule to newly created apps.
