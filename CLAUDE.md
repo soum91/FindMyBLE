@@ -13,3 +13,7 @@ Before implementing or changing any diagnostics or logs, follow the **Universal 
 ## Universal diagnostic export contract
 
 All generated diagnostic/log reports require verified Copy (read back clipboard where supported and show visible success/failure), independent native Share, native Save as plain `.txt` with system Files picker (`fileExporter` or `UIDocumentPickerViewController` on iOS), and selectable full report text fallback. No silent clipboard-only buttons. Include app/build, device/OS, actionable return/error codes and redact secrets. Verify cross-app paste, Share and Save on a signed device; otherwise mark unverified. Preserve other instructions.
+
+## Mandatory cross-project file picker standard
+
+**RELEASE-BLOCKING:** Follow [MANDATORY_FILE_PICKER.md](https://github.com/soum91/tweaks/blob/main/MANDATORY_FILE_PICKER.md) and this repository's AGENTS.md for every existing and future importer, exporter, signer, browser and file picker. A picker that merely opens but ignores a file tap is broken. Require end-to-end real-device selection/import verification before claiming a fix; preserve security scope and asynchronous staged files; report actionable failures. Propagate this requirement to every new app. Do not weaken existing policies.
